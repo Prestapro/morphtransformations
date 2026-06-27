@@ -113,6 +113,30 @@ def check_is_established_feminitive(word: str) -> bool:
             pass
     return False
 
+def check_is_inanimate(word: str) -> bool:
+    """Check if the input word exists in the database and is strictly inanimate (no anim tag)."""
+    if _get_conn is not None:
+        try:
+            conn = _get_conn()
+            rows = conn.execute(
+                "SELECT grammemes FROM paradigms WHERE form = ? LIMIT 10",
+                (word.lower(),)
+            ).fetchall()
+            if not rows:
+                return False
+            
+            has_inan = False
+            has_anim = False
+            for (gram,) in rows:
+                if "inan" in gram:
+                    has_inan = True
+                if "anim" in gram:
+                    has_anim = True
+            return has_inan and not has_anim
+        except Exception:
+            pass
+    return False
+
 def generate_feminitive_rule(masc: str) -> tuple[str, str, str]:
     """Apply morphotactic rules to generate feminitive and return the rule explanation."""
     masc_lower = masc.lower().strip()
@@ -286,6 +310,22 @@ def api_feminitive(req: FeminitiveRequest):
     word = req.word.strip()
     if not word:
         return {"error": "Пустое слово"}
+        
+    # Check if the input word is strictly inanimate
+    if check_is_inanimate(word):
+        return {
+            "masculine": word,
+            "feminitive": word,
+            "stem": word,
+            "masc_suffix": "",
+            "fem_suffix": "",
+            "rule": "Слово является неодушевленным существительным.",
+            "style": req.style,
+            "blocked": True,
+            "message": f"Словообразование заблокировано! Слово '{word}' обозначает неодушевленный предмет. Демка предназначена для генерации феминитивов лиц и профессий.",
+            "collision": False,
+            "established": False
+        }
         
     fem_candidate, rule_desc, trigger_suf = generate_feminitive_rule(word)
     
