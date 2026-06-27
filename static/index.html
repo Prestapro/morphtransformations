@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Морфологическая Алгебра — Словоизменение и Феминитивы</title>
+    <meta name="description" content="Интерактивный демо-интерфейс для анализа словоизменения, омонимических блокировок и стилей согласования.">
+    <!-- Google Fonts: Outfit and Inter -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+    <div class="background-glow"></div>
+    <div class="container">
+        <!-- Header -->
+        <header class="app-header">
+            <h1 id="app-title">Морфологическая Алгебра</h1>
+            <p id="app-subtitle">Инварианты словоизменения и суффиксального согласования</p>
+        </header>
+
+        <!-- Navigation Tabs -->
+        <nav class="tabs" role="tablist">
+            <button class="tab-btn active" id="tab-feminitive" role="tab" aria-selected="true">Феминизатор</button>
+            <button class="tab-btn" id="tab-inflect" role="tab" aria-selected="false">Инфлектор</button>
+            <button class="tab-btn" id="tab-rules-catalog" role="tab" aria-selected="false">Карта правил</button>
+        </nav>
+
+        <!-- Main Content Panel -->
+        <main class="glass-panel">
+            
+            <!-- Section: Feminitive Derivation -->
+            <section id="sec-feminitive" class="tab-content active">
+                <div class="content-grid">
+                    <div class="control-panel">
+                        <h2>Генерация ролей и профессий</h2>
+                        <p class="section-desc">Введите название профессии в мужском роде для проверки правил феминизации.</p>
+                        
+                        <div class="input-group">
+                            <label for="fem-input-word">Слово (мужской род)</label>
+                            <input type="text" id="fem-input-word" placeholder="Например: космонавт, американец, блогер..." autocomplete="off">
+                        </div>
+
+                        <div class="input-group">
+                            <label for="fem-style-select">Стилистический регистр</label>
+                            <div class="style-toggle-container">
+                                <button class="style-btn active" id="btn-style-colloquial">Разговорный</button>
+                                <button class="style-btn" id="btn-style-official">Официально-деловой</button>
+                            </div>
+                        </div>
+
+                        <button class="primary-btn" id="btn-generate-fem">Сгенерировать</button>
+                    </div>
+
+                    <div class="result-panel">
+                        <h3>Результат словообразования</h3>
+                        
+                        <div id="fem-result-box" class="result-box empty">
+                            <div class="empty-state">Введите слово для анализа сочетаемости</div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Section: Inflector -->
+            <section id="sec-inflect" class="tab-content">
+                <div class="content-grid">
+                    <div class="control-panel">
+                        <h2>Склонение и спряжение слов</h2>
+                        <p class="section-desc">Таргетированное изменение слова по грамматическим признакам (из базы парадигм).</p>
+                        
+                        <div class="input-group">
+                            <label for="inf-input-word">Слово</label>
+                            <input type="text" id="inf-input-word" placeholder="Введите слово (напр. книга, бежать)..." autocomplete="off">
+                        </div>
+
+                        <div class="input-group">
+                            <label for="inf-gram-select">Грамматический таргет</label>
+                            <select id="inf-gram-select">
+                                <option value="plur,gent">Множественное число, Родительный падеж (кого/чего)</option>
+                                <option value="sing,datv">Единственное число, Дательный падеж (кому/чему)</option>
+                                <option value="plur,nomn">Множественное число, Именительный падеж (кто/что)</option>
+                                <option value="past,femn,sing">Прошедшее время, Женский род (для глаголов)</option>
+                                <option value="pres,3per,plur">Настоящее время, 3 лицо, Мн. число</option>
+                            </select>
+                        </div>
+
+                        <button class="primary-btn" id="btn-run-inflect">Склонять</button>
+                    </div>
+
+                    <div class="result-panel">
+                        <h3>Склоненная форма</h3>
+                        <div id="inf-result-box" class="result-box empty">
+                            <div class="empty-state">Введите слово для изменения формы</div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Section: Rules Catalog -->
+            <section id="sec-rules" class="tab-content">
+                <h2>Морфотактическая карта переходов</h2>
+                <p class="section-desc">Универсальные алгебраические правила, которые определяют выбор суффиксов в зависимости от фонетики основ.</p>
+                <div class="rules-grid" id="rules-container">
+                    <!-- Cards will be populated dynamically -->
+                    <div class="loading-state">Загрузка правил...</div>
+                </div>
+            </section>
+
+        </main>
+
+        <!-- Footer -->
+        <footer class="app-footer">
+            <p>Движок Logos & Neuromorph Web Demo &copy; 2026. Разреженная морфология без баз данных.</p>
+        </footer>
+    </div>
+
+    <!-- Scripts -->
+    <script src="js/main.js"></script>
+</body>
+</html>
