@@ -95,6 +95,20 @@ def check_homonym_collision(word: str) -> str | None:
             pass
     return None
 
+def check_is_established_feminitive(word: str) -> bool:
+    """Check if the generated word exists in the paradigm database as a feminine noun."""
+    if _get_conn is not None:
+        try:
+            conn = _get_conn()
+            row = conn.execute(
+                "SELECT 1 FROM paradigms WHERE form = ? AND pos = 'NOUN' AND grammemes LIKE '%femn%' LIMIT 1",
+                (word.lower(),)
+            ).fetchone()
+            return row is not None
+        except Exception:
+            pass
+    return False
+
 def generate_feminitive_rule(masc: str) -> tuple[str, str, str]:
     """Apply morphotactic rules to generate feminitive and return the rule explanation."""
     masc_lower = masc.lower().strip()
@@ -231,12 +245,15 @@ def api_feminitive(req: FeminitiveRequest):
     if word[0].isupper():
         fem_candidate = fem_candidate.capitalize()
         
+    # Check if candidate exists in dictionary (is established)
+    is_established = check_is_established_feminitive(fem_candidate)
+    
     # Check style register
     blocked = False
     message = "Словосочетание семантически корректно."
     
     if req.style == "official":
-        if fem_candidate.lower() not in OFFICIAL_WHITELIST:
+        if not is_established and fem_candidate.lower() not in OFFICIAL_WHITELIST:
             blocked = True
             message = f"В официально-деловом стиле феминитив '{fem_candidate}' заблокирован. Используйте мужской род: '{word}'."
             
@@ -264,7 +281,8 @@ def api_feminitive(req: FeminitiveRequest):
         "style": req.style,
         "blocked": blocked,
         "message": message,
-        "collision": collision is not None
+        "collision": collision is not None,
+        "established": is_established
     }
 
 @app.get("/api/rules")

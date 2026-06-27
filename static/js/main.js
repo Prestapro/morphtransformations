@@ -118,6 +118,25 @@ document.addEventListener("DOMContentLoaded", () => {
                 html += `<div class="split-word"><span class="stem-hl">${word}</span></div>`;
             } else {
                 html += `<div class="split-word"><span class="stem-hl">${data.stem}</span><span class="suf-hl">${data.fem_suffix}</span></div>`;
+                
+                // Established status badge
+                if (data.established) {
+                    html += `
+                        <div style="text-align: center; margin-bottom: 20px;">
+                            <span class="rule-badge" style="background: rgba(16, 185, 129, 0.1); color: var(--success); border: 1px solid rgba(16, 185, 129, 0.25); font-size: 0.8rem; padding: 4px 12px; border-radius: 20px; font-weight: 600;">
+                                Устоявшееся слово (есть в словаре)
+                            </span>
+                        </div>
+                    `;
+                } else {
+                    html += `
+                        <div style="text-align: center; margin-bottom: 20px;">
+                            <span class="rule-badge" style="background: rgba(168, 85, 247, 0.1); color: var(--accent); border: 1px solid rgba(168, 85, 247, 0.25); font-size: 0.8rem; padding: 4px 12px; border-radius: 20px; font-weight: 600;">
+                                Разговорное / неологизм (нет в словаре)
+                            </span>
+                        </div>
+                    `;
+                }
             }
 
             // Alert Box
