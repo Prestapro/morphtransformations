@@ -17,8 +17,13 @@ document.addEventListener("DOMContentLoaded", () => {
     
     const runInflectBtn = document.getElementById("btn-run-inflect");
     const infInput = document.getElementById("inf-input-word");
-    const infGramSelect = document.getElementById("inf-gram-select");
     const infResultBox = document.getElementById("inf-result-box");
+    
+    const builderNumber = document.getElementById("builder-number");
+    const builderGender = document.getElementById("builder-gender");
+    const builderCase = document.getElementById("builder-case");
+    const builderTense = document.getElementById("builder-tense");
+    const builderPerson = document.getElementById("builder-person");
     
     const rulesContainer = document.getElementById("rules-container");
 
@@ -148,9 +153,24 @@ document.addEventListener("DOMContentLoaded", () => {
     // -----------------------------------------------------------------------
     runInflectBtn.addEventListener("click", async () => {
         const word = infInput.value.trim();
-        const grammemes = infGramSelect.value;
+        
+        const activeGrams = [];
+        if (builderNumber.value) activeGrams.push(builderNumber.value);
+        if (builderGender.value) activeGrams.push(builderGender.value);
+        if (builderCase.value) activeGrams.push(builderCase.value);
+        if (builderTense.value) activeGrams.push(builderTense.value);
+        if (builderPerson.value) activeGrams.push(builderPerson.value);
+        
+        const grammemes = activeGrams.join(",");
+
         if (!word) {
             infResultBox.innerHTML = `<div class="empty-state">Введите слово для склонения</div>`;
+            infResultBox.classList.add("empty");
+            return;
+        }
+
+        if (!grammemes) {
+            infResultBox.innerHTML = `<div class="empty-state" style="color: var(--danger);">Выберите хотя бы один грамматический признак в конструкторе</div>`;
             infResultBox.classList.add("empty");
             return;
         }

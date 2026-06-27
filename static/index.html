@@ -75,15 +75,62 @@
                             <input type="text" id="inf-input-word" placeholder="Введите слово (напр. книга, бежать)..." autocomplete="off">
                         </div>
 
-                        <div class="input-group">
-                            <label for="inf-gram-select">Грамматический таргет</label>
-                            <select id="inf-gram-select">
-                                <option value="plur,gent">Множественное число, Родительный падеж (кого/чего)</option>
-                                <option value="sing,datv">Единственное число, Дательный падеж (кому/чему)</option>
-                                <option value="plur,nomn">Множественное число, Именительный падеж (кто/что)</option>
-                                <option value="past,femn,sing">Прошедшее время, Женский род (для глаголов)</option>
-                                <option value="pres,3per,plur">Настоящее время, 3 лицо, Мн. число</option>
-                            </select>
+                        <div class="grammeme-builder" style="background: rgba(255,255,255,0.02); border: 1px solid var(--border-color); padding: 20px; border-radius: 16px; margin-bottom: 24px;">
+                            <h3 style="font-size: 0.9rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-secondary); margin-bottom: 16px; font-family: 'Outfit', sans-serif;">Конструктор признаков</h3>
+                            
+                            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px;">
+                                <div class="builder-select-group">
+                                    <label for="builder-number" style="font-size: 0.75rem; color: var(--text-secondary); display: block; margin-bottom: 6px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em;">Число</label>
+                                    <select id="builder-number" style="padding: 10px 14px;">
+                                        <option value="">(не указано)</option>
+                                        <option value="sing">Единственное (sing)</option>
+                                        <option value="plur">Множественное (plur)</option>
+                                    </select>
+                                </div>
+                                <div class="builder-select-group">
+                                    <label for="builder-gender" style="font-size: 0.75rem; color: var(--text-secondary); display: block; margin-bottom: 6px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em;">Род</label>
+                                    <select id="builder-gender" style="padding: 10px 14px;">
+                                        <option value="">(не указано)</option>
+                                        <option value="masc">Мужской (masc)</option>
+                                        <option value="femn">Женский (femn)</option>
+                                        <option value="neut">Средний (neut)</option>
+                                    </select>
+                                </div>
+                            </div>
+
+                            <div style="margin-bottom: 12px;">
+                                <label for="builder-case" style="font-size: 0.75rem; color: var(--text-secondary); display: block; margin-bottom: 6px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em;">Падеж</label>
+                                <select id="builder-case" style="padding: 10px 14px;">
+                                    <option value="">(не указано)</option>
+                                    <option value="nomn">Именительный (nomn) - Кто? Что?</option>
+                                    <option value="gent">Родительный (gent) - Кого? Чего?</option>
+                                    <option value="datv">Дательный (datv) - Кому? Чему?</option>
+                                    <option value="accs">Винительный (accs) - Кого? Что?</option>
+                                    <option value="ablt">Творительный (ablt) - Кем? Чем?</option>
+                                    <option value="loct">Предложный (loct) - О ком? О чём?</option>
+                                </select>
+                            </div>
+
+                            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+                                <div class="builder-select-group">
+                                    <label for="builder-tense" style="font-size: 0.75rem; color: var(--text-secondary); display: block; margin-bottom: 6px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em;">Время</label>
+                                    <select id="builder-tense" style="padding: 10px 14px;">
+                                        <option value="">(не указано)</option>
+                                        <option value="pres">Настоящее (pres)</option>
+                                        <option value="past">Прошедшее (past)</option>
+                                        <option value="futr">Будущее (futr)</option>
+                                    </select>
+                                </div>
+                                <div class="builder-select-group">
+                                    <label for="builder-person" style="font-size: 0.75rem; color: var(--text-secondary); display: block; margin-bottom: 6px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em;">Лицо</label>
+                                    <select id="builder-person" style="padding: 10px 14px;">
+                                        <option value="">(не указано)</option>
+                                        <option value="1per">1-е лицо (1per) - Я/Мы</option>
+                                        <option value="2per">2-е лицо (2per) - Ты/Вы</option>
+                                        <option value="3per">3-е лицо (3per) - Он/Они</option>
+                                    </select>
+                                </div>
+                            </div>
                         </div>
 
                         <button class="primary-btn" id="btn-run-inflect">Склонять</button>
