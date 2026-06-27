@@ -24,6 +24,10 @@ document.addEventListener("DOMContentLoaded", () => {
     const builderCase = document.getElementById("builder-case");
     const builderTense = document.getElementById("builder-tense");
     const builderPerson = document.getElementById("builder-person");
+
+    const infPosContainer = document.getElementById("inf-pos-container");
+    const posPillsContainer = infPosContainer.querySelector(".pos-pills-container");
+    let activePos = null;
     
     const rulesContainer = document.getElementById("rules-container");
 
@@ -168,6 +172,104 @@ document.addEventListener("DOMContentLoaded", () => {
     });
 
     // -----------------------------------------------------------------------
+    // Dynamic POS Selection & Form Constraints
+    // -----------------------------------------------------------------------
+    function updateBuilderState() {
+        if (!activePos) {
+            builderNumber.disabled = false;
+            builderGender.disabled = false;
+            builderCase.disabled = false;
+            builderTense.disabled = false;
+            builderPerson.disabled = false;
+            return;
+        }
+
+        const isNounAdj = ["NOUN", "ADJF", "ADJS", "COMP", "NPRO"].includes(activePos);
+        const isVerb = ["VERB", "INFN", "GRND"].includes(activePos);
+
+        if (isNounAdj) {
+            builderNumber.disabled = false;
+            builderGender.disabled = false;
+            builderCase.disabled = false;
+            
+            builderTense.disabled = true;
+            builderTense.value = "";
+            builderPerson.disabled = true;
+            builderPerson.value = "";
+        } else if (isVerb) {
+            builderTense.disabled = false;
+            builderPerson.disabled = false;
+            builderNumber.disabled = false;
+            
+            builderCase.disabled = true;
+            builderCase.value = "";
+            
+            if (builderTense.value === "past") {
+                builderGender.disabled = false;
+            } else {
+                builderGender.disabled = true;
+                builderGender.value = "";
+            }
+        } else {
+            builderNumber.disabled = false;
+            builderGender.disabled = false;
+            builderCase.disabled = false;
+            builderTense.disabled = false;
+            builderPerson.disabled = false;
+        }
+    }
+
+    builderTense.addEventListener("change", () => {
+        updateBuilderState();
+    });
+
+    let analyzeTimeout = null;
+    infInput.addEventListener("input", () => {
+        clearTimeout(analyzeTimeout);
+        analyzeTimeout = setTimeout(async () => {
+            const word = infInput.value.trim();
+            if (!word) {
+                infPosContainer.style.display = "none";
+                posPillsContainer.innerHTML = "";
+                activePos = null;
+                updateBuilderState();
+                return;
+            }
+
+            try {
+                const data = await postData("/api/analyze", { word });
+                if (data.interpretations && data.interpretations.length > 0) {
+                    infPosContainer.style.display = "block";
+                    let html = "";
+                    data.interpretations.forEach((inter, idx) => {
+                        html += `<button type="button" class="pos-pill" data-pos="${inter.pos}">${inter.lemma} (${inter.pos_ru})</button>`;
+                    });
+                    posPillsContainer.innerHTML = html;
+
+                    const pills = posPillsContainer.querySelectorAll(".pos-pill");
+                    pills.forEach(pill => {
+                        pill.addEventListener("click", () => {
+                            pills.forEach(p => p.classList.remove("active"));
+                            pill.classList.add("active");
+                            activePos = pill.getAttribute("data-pos");
+                            updateBuilderState();
+                        });
+                    });
+
+                    pills[0].click();
+                } else {
+                    infPosContainer.style.display = "none";
+                    posPillsContainer.innerHTML = "";
+                    activePos = null;
+                    updateBuilderState();
+                }
+            } catch (err) {
+                console.error("Error analyzing word POS:", err);
+            }
+        }, 300);
+    });
+
+    // -----------------------------------------------------------------------
     // Inflector Execution Logic
     // -----------------------------------------------------------------------
     runInflectBtn.addEventListener("click", async () => {
@@ -198,7 +300,7 @@ document.addEventListener("DOMContentLoaded", () => {
         infResultBox.classList.remove("empty");
 
         try {
-            const data = await postData("/api/inflect", { word, grammemes });
+            const data = await postData("/api/inflect", { word, grammemes, pos: activePos });
             
             if (data.detail) {
                 infResultBox.innerHTML = `<div class="empty-state" style="color: var(--danger);">${data.detail}</div>`;

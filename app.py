@@ -70,6 +70,10 @@ POS_NAMES = {
 class InflectRequest(BaseModel):
     word: str
     grammemes: str
+    pos: str | None = None
+
+class AnalyzeRequest(BaseModel):
+    word: str
 
 class FeminitiveRequest(BaseModel):
     word: str
@@ -172,9 +176,13 @@ def api_inflect(req: InflectRequest):
                 if (lemma, pos) not in interpretations_list:
                     interpretations_list.append((lemma, pos))
                     
+        # Apply POS constraint filter if passed
+        if req.pos:
+            interpretations_list = [item for item in interpretations_list if item[1] == req.pos]
+
         # 3. If no interpretations found, fallback to direct inflect
         if not interpretations_list:
-            res = db_inflect(req.word, gram_set)
+            res = db_inflect(req.word, gram_set, pos_constraint=req.pos)
             if res:
                 return {
                     "word": req.word,
@@ -182,7 +190,7 @@ def api_inflect(req: InflectRequest):
                     "interpretations": [
                         {
                             "lemma": req.word,
-                            "pos": "НЕИЗВЕСТНО",
+                            "pos": req.pos if req.pos else "НЕИЗВЕСТНО",
                             "result": res,
                             "applicable": True
                         }
@@ -230,6 +238,46 @@ def api_inflect(req: InflectRequest):
             "warning": warning
         }
         
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/analyze")
+def api_analyze(req: AnalyzeRequest):
+    if db_inflect is None:
+        raise HTTPException(status_code=500, detail="Database inflector is unavailable.")
+        
+    try:
+        from engine.language.inflector import _cached_paradigm, _cached_reverse_lookup
+        word_lower = req.word.strip().lower()
+        if not word_lower:
+            return {"interpretations": []}
+            
+        interpretations_list = []
+        
+        # 1. Try word as lemma
+        lemma_rows = _cached_paradigm(word_lower)
+        if lemma_rows:
+            pos_set = set(r[0] for r in lemma_rows)
+            for pos in pos_set:
+                interpretations_list.append((word_lower, pos))
+                
+        # 2. Try reverse lookup
+        reverse = _cached_reverse_lookup(word_lower)
+        if reverse:
+            for lemma, pos, _gram_str, _form in reverse:
+                if (lemma, pos) not in interpretations_list:
+                    interpretations_list.append((lemma, pos))
+                    
+        # Map to response format
+        interpretations = []
+        for lemma, pos in interpretations_list:
+            interpretations.append({
+                "lemma": lemma,
+                "pos": pos,
+                "pos_ru": POS_NAMES.get(pos, pos.lower())
+            })
+            
+        return {"interpretations": interpretations}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
