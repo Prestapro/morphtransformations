@@ -184,39 +184,55 @@ document.addEventListener("DOMContentLoaded", () => {
             return;
         }
 
-        const isNounAdj = ["NOUN", "ADJF", "ADJS", "COMP", "NPRO"].includes(activePos);
-        const isVerb = ["VERB", "INFN", "GRND"].includes(activePos);
+        // Initialize all as disabled
+        builderNumber.disabled = true;
+        builderGender.disabled = true;
+        builderCase.disabled = true;
+        builderTense.disabled = true;
+        builderPerson.disabled = true;
 
-        if (isNounAdj) {
+        if (activePos === "NOUN") {
+            // Nouns decline by number and case (gender is constant)
+            builderNumber.disabled = false;
+            builderCase.disabled = false;
+        } else if (["ADJF", "ADJS", "PRTF", "PRTS"].includes(activePos)) {
+            // Adjectives and full participles decline by number, gender, and case
+            // Short adjectives/participles do not decline by case
             builderNumber.disabled = false;
             builderGender.disabled = false;
-            builderCase.disabled = false;
-            
-            builderTense.disabled = true;
-            builderTense.value = "";
-            builderPerson.disabled = true;
-            builderPerson.value = "";
-        } else if (isVerb) {
+            if (activePos === "ADJF" || activePos === "PRTF") {
+                builderCase.disabled = false;
+            }
+        } else if (activePos === "VERB") {
+            // Finite verbs conjugate by tense, number, person (present/future) and gender (past)
             builderTense.disabled = false;
-            builderPerson.disabled = false;
             builderNumber.disabled = false;
-            
-            builderCase.disabled = true;
-            builderCase.value = "";
             
             if (builderTense.value === "past") {
                 builderGender.disabled = false;
+            } else if (builderTense.value === "pres" || builderTense.value === "futr") {
+                builderPerson.disabled = false;
             } else {
-                builderGender.disabled = true;
-                builderGender.value = "";
+                // Tense not selected: allow both gender and person until one is chosen
+                builderGender.disabled = false;
+                builderPerson.disabled = false;
             }
-        } else {
+        } else if (activePos === "NUMR" || activePos === "NPRO") {
+            // Numerals and pronouns decline by case, and some by gender/number
+            builderCase.disabled = false;
             builderNumber.disabled = false;
             builderGender.disabled = false;
-            builderCase.disabled = false;
-            builderTense.disabled = false;
-            builderPerson.disabled = false;
+        } else {
+            // Invariable parts of speech (INFN, GRND, COMP, ADVB, PRED, PREP, CONJ, PRCL, INTJ)
+            // remain completely disabled.
         }
+
+        // Clear values of disabled elements to avoid submitting hidden state
+        if (builderNumber.disabled) builderNumber.value = "";
+        if (builderGender.disabled) builderGender.value = "";
+        if (builderCase.disabled) builderCase.value = "";
+        if (builderTense.disabled) builderTense.value = "";
+        if (builderPerson.disabled) builderPerson.value = "";
     }
 
     builderTense.addEventListener("change", () => {

@@ -466,3 +466,21 @@ input[type="text"]:focus, select:focus {
     color: var(--text-secondary);
     font-size: 0.85rem;
 }
+
+/* Explicit Form Disabled States */
+select:disabled, input:disabled {
+    opacity: 0.35 !important;
+    background: rgba(0, 0, 0, 0.4) !important;
+    border: 1px dashed rgba(255, 255, 255, 0.1) !important;
+    color: rgba(255, 255, 255, 0.3) !important;
+    cursor: not-allowed !important;
+    pointer-events: none;
+    box-shadow: none !important;
+}
+
+.grammeme-builder div:has(select:disabled) label {
+    opacity: 0.35;
+    transition: var(--transition);
+    cursor: not-allowed;
+}
+
