@@ -167,21 +167,69 @@ document.addEventListener("DOMContentLoaded", () => {
                 return;
             }
 
-            // LCP Split comparison between source and result
-            const resWord = data.result;
-            let i = 0;
-            while (i < minLen(word, resWord) && word[i] === resWord[i]) {
-                i += 1;
-            }
-            const stem = resWord.slice(0, i);
-            const resSuf = resWord.slice(i);
+            // Build HTML
+            let html = "";
 
-            let html = `<div class="split-word"><span class="stem-hl">${stem}</span><span class="suf-hl">${resSuf}</span></div>`;
-            
-            if (data.warning) {
-                html += `<div class="status-alert blocked">${data.warning}</div>`;
+            if (data.interpretations && data.interpretations.length > 0) {
+                if (data.interpretations.length > 1) {
+                    html += `<div class="status-alert success" style="margin-bottom: 20px; font-weight: 500; text-align: center; background: rgba(99, 102, 241, 0.1); border-color: rgba(99, 102, 241, 0.25); color: var(--primary);">
+                        Обнаружена омонимия: ${data.interpretations.length} варианта трактовки слова
+                    </div>`;
+                }
+
+                data.interpretations.forEach(inter => {
+                    const statusClass = inter.applicable ? "success" : "blocked";
+                    const isApplicableText = inter.applicable ? "успешно" : "неприменимо";
+                    
+                    html += `
+                        <div class="rule-card-inline" style="margin-bottom: 16px; border-left: 4px solid ${inter.applicable ? 'var(--success)' : 'var(--danger)'}; text-align: left; width: 100%;">
+                            <h4 style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                                <span>Лемма: <strong style="color: #ffffff;">${inter.lemma}</strong> (${inter.pos})</span>
+                                <span class="rule-badge" style="margin: 0; padding: 2px 8px; font-size: 0.75rem; background: ${inter.applicable ? 'var(--success-bg)' : 'var(--danger-bg)'}; color: ${inter.applicable ? 'var(--success)' : 'var(--danger)'}; border: 1px solid ${inter.applicable ? 'var(--success-border)' : 'var(--danger-border)'};">
+                                    ${isApplicableText}
+                                </span>
+                            </h4>
+                    `;
+
+                    if (inter.applicable) {
+                        const resWord = inter.result;
+                        let i = 0;
+                        while (i < minLen(word, resWord) && word[i] === resWord[i]) {
+                            i += 1;
+                        }
+                        const stem = resWord.slice(0, i);
+                        const resSuf = resWord.slice(i);
+                        
+                        html += `
+                            <div class="split-word" style="font-size: 2rem; margin: 12px 0 0 0; text-align: left; padding-left: 8px;">
+                                <span class="stem-hl">${stem}</span><span class="suf-hl">${resSuf || '-'}</span>
+                            </div>
+                        `;
+                    } else {
+                        html += `
+                            <p style="margin-top: 8px; font-size: 0.9rem; color: var(--text-secondary); padding-left: 8px;">
+                                ${inter.reason}
+                            </p>
+                        `;
+                    }
+
+                    html += `</div>`;
+                });
             } else {
-                html += `<div class="status-alert success">Форма успешно извлечена из базы парадигм.</div>`;
+                const resWord = data.result;
+                let i = 0;
+                while (i < minLen(word, resWord) && word[i] === resWord[i]) {
+                    i += 1;
+                }
+                const stem = resWord.slice(0, i);
+                const resSuf = resWord.slice(i);
+
+                html += `<div class="split-word"><span class="stem-hl">${stem}</span><span class="suf-hl">${resSuf}</span></div>`;
+                if (data.warning) {
+                    html += `<div class="status-alert blocked">${data.warning}</div>`;
+                } else {
+                    html += `<div class="status-alert success">Форма успешно извлечена из базы парадигм.</div>`;
+                }
             }
 
             infResultBox.innerHTML = html;

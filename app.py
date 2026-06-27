@@ -47,6 +47,26 @@ HOMONYM_OVERRIDES = {
     "овсянка": "крупа / птица"
 }
 
+POS_NAMES = {
+    "NOUN": "существительное",
+    "ADJF": "прилагательное (полное)",
+    "ADJS": "прилагательное (краткое)",
+    "COMP": "компаратив",
+    "VERB": "глагол (личная форма)",
+    "INFN": "глагол (инфинитив)",
+    "PRTF": "причастие (полное)",
+    "PRTS": "причастие (краткое)",
+    "GRND": "деепричастие",
+    "NUMR": "числительное",
+    "ADVB": "наречие",
+    "NPRO": "местоимение-существительное",
+    "PRED": "предикатив",
+    "PREP": "предлог",
+    "CONJ": "союз",
+    "PRCL": "частица",
+    "INTJ": "междометие"
+}
+
 class InflectRequest(BaseModel):
     word: str
     grammemes: str
@@ -116,11 +136,86 @@ def api_inflect(req: InflectRequest):
         raise HTTPException(status_code=500, detail="Database inflector is unavailable.")
         
     try:
+        from engine.language.inflector import _cached_paradigm, _cached_reverse_lookup, _inflect_from_paradigm
+        
+        word_lower = req.word.strip().lower()
         gram_set = set(g.strip() for g in req.grammemes.split(",") if g.strip())
-        res = db_inflect(req.word, gram_set)
-        if res:
-            return {"word": req.word, "result": res}
-        return {"word": req.word, "result": req.word, "warning": "Слово не найдено в парадигмах"}
+        
+        # Collect all unique interpretations: (lemma, pos)
+        interpretations_list = []
+        
+        # 1. Try word as lemma
+        lemma_rows = _cached_paradigm(word_lower)
+        if lemma_rows:
+            pos_set = set(r[0] for r in lemma_rows)
+            for pos in pos_set:
+                interpretations_list.append((word_lower, pos))
+                
+        # 2. Try reverse lookup (inflected forms)
+        reverse = _cached_reverse_lookup(word_lower)
+        if reverse:
+            for lemma, pos, _gram_str, _form in reverse:
+                if (lemma, pos) not in interpretations_list:
+                    interpretations_list.append((lemma, pos))
+                    
+        # 3. If no interpretations found, fallback to direct inflect
+        if not interpretations_list:
+            res = db_inflect(req.word, gram_set)
+            if res:
+                return {
+                    "word": req.word,
+                    "result": res,
+                    "interpretations": [
+                        {
+                            "lemma": req.word,
+                            "pos": "НЕИЗВЕСТНО",
+                            "result": res,
+                            "applicable": True
+                        }
+                    ]
+                }
+            return {"word": req.word, "result": req.word, "warning": "Слово не найдено в парадигмах"}
+
+        # 4. Generate inflection for each interpretation
+        interpretations = []
+        for lemma, pos in interpretations_list:
+            rows = _cached_paradigm(lemma)
+            res = _inflect_from_paradigm(rows, frozenset(gram_set), pos_constraint=pos)
+            pos_ru = POS_NAMES.get(pos, pos.lower())
+            
+            if res:
+                interpretations.append({
+                    "lemma": lemma,
+                    "pos": pos_ru,
+                    "result": res,
+                    "applicable": True
+                })
+            else:
+                interpretations.append({
+                    "lemma": lemma,
+                    "pos": pos_ru,
+                    "result": req.word,
+                    "applicable": False,
+                    "reason": f"Грамматический таргет неприменим к части речи: {pos_ru}"
+                })
+                
+        # Select primary result (first applicable)
+        primary_res = req.word
+        warning = None
+        applicable_items = [item for item in interpretations if item["applicable"]]
+        
+        if applicable_items:
+            primary_res = applicable_items[0]["result"]
+        else:
+            warning = "Грамматический таргет неприменим ни к одной из трактовок слова"
+            
+        return {
+            "word": req.word,
+            "result": primary_res,
+            "interpretations": interpretations,
+            "warning": warning
+        }
+        
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
