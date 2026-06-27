@@ -227,6 +227,34 @@ def api_inflect(req: InflectRequest):
         for lemma, pos in interpretations_list:
             rows = _cached_paradigm(lemma)
             res = _inflect_from_paradigm(rows, frozenset(gram_set), pos_constraint=pos)
+            
+            # Check for imperfective verb future tense (analytic future)
+            is_verb = pos in ("VERB", "INFN")
+            is_impf = any("impf" in r[1] for r in rows)
+            is_futr = "futr" in gram_set
+            
+            if not res and is_verb and is_impf and is_futr:
+                # Resolve auxiliary 'быть' form based on target grammemes
+                aux = "будет"  # default
+                if "1per" in gram_set:
+                    aux = "буду" if "sing" in gram_set or "plur" not in gram_set else "будем"
+                elif "2per" in gram_set:
+                    aux = "будешь" if "sing" in gram_set or "plur" not in gram_set else "будете"
+                elif "3per" in gram_set:
+                    aux = "будет" if "sing" in gram_set or "plur" not in gram_set else "будут"
+                
+                # Check explicit numbers
+                if "plur" in gram_set:
+                    if "1per" in gram_set: aux = "будем"
+                    elif "2per" in gram_set: aux = "будете"
+                    else: aux = "будут"
+                elif "sing" in gram_set:
+                    if "1per" in gram_set: aux = "буду"
+                    elif "2per" in gram_set: aux = "будешь"
+                    else: aux = "будет"
+                    
+                res = f"{aux} {lemma}"
+                
             pos_ru = POS_NAMES.get(pos, pos.lower())
             
             if res:

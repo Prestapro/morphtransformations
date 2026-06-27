@@ -334,18 +334,33 @@ document.addEventListener("DOMContentLoaded", () => {
 
                     if (inter.applicable) {
                         const resWord = inter.result;
-                        let i = 0;
-                        while (i < minLen(word, resWord) && word[i] === resWord[i]) {
-                            i += 1;
+                        if (resWord.includes(" ")) {
+                            const parts = resWord.split(" ");
+                            const aux = parts[0];
+                            const inf = parts.slice(1).join(" ");
+                            html += `
+                                <div class="split-word" style="font-size: 2rem; margin: 12px 0 0 0; text-align: left; padding-left: 8px; display: flex; align-items: baseline; gap: 8px;">
+                                    <span class="suf-hl" style="font-size: 1.4rem; font-weight: 400; opacity: 0.85;">${aux}</span>
+                                    <span class="stem-hl">${inf}</span>
+                                </div>
+                                <div style="font-size: 0.8rem; color: var(--text-secondary); margin-top: 4px; padding-left: 8px;">
+                                    Сложная аналитическая форма будущего времени (быть + инфинитив)
+                                </div>
+                            `;
+                        } else {
+                            let i = 0;
+                            while (i < minLen(word, resWord) && word[i] === resWord[i]) {
+                                i += 1;
+                            }
+                            const stem = resWord.slice(0, i);
+                            const resSuf = resWord.slice(i);
+                            
+                            html += `
+                                <div class="split-word" style="font-size: 2rem; margin: 12px 0 0 0; text-align: left; padding-left: 8px;">
+                                    <span class="stem-hl">${stem}</span><span class="suf-hl">${resSuf || '-'}</span>
+                                </div>
+                            `;
                         }
-                        const stem = resWord.slice(0, i);
-                        const resSuf = resWord.slice(i);
-                        
-                        html += `
-                            <div class="split-word" style="font-size: 2rem; margin: 12px 0 0 0; text-align: left; padding-left: 8px;">
-                                <span class="stem-hl">${stem}</span><span class="suf-hl">${resSuf || '-'}</span>
-                            </div>
-                        `;
                     } else {
                         html += `
                             <p style="margin-top: 8px; font-size: 0.9rem; color: var(--text-secondary); padding-left: 8px;">
@@ -358,14 +373,26 @@ document.addEventListener("DOMContentLoaded", () => {
                 });
             } else {
                 const resWord = data.result;
-                let i = 0;
-                while (i < minLen(word, resWord) && word[i] === resWord[i]) {
-                    i += 1;
-                }
-                const stem = resWord.slice(0, i);
-                const resSuf = resWord.slice(i);
+                if (resWord.includes(" ")) {
+                    const parts = resWord.split(" ");
+                    const aux = parts[0];
+                    const inf = parts.slice(1).join(" ");
+                    html += `
+                        <div class="split-word" style="display: flex; align-items: baseline; gap: 8px;">
+                            <span class="suf-hl" style="font-size: 1.4rem; font-weight: 400; opacity: 0.85;">${aux}</span>
+                            <span class="stem-hl">${inf}</span>
+                        </div>
+                    `;
+                } else {
+                    let i = 0;
+                    while (i < minLen(word, resWord) && word[i] === resWord[i]) {
+                        i += 1;
+                    }
+                    const stem = resWord.slice(0, i);
+                    const resSuf = resWord.slice(i);
 
-                html += `<div class="split-word"><span class="stem-hl">${stem}</span><span class="suf-hl">${resSuf}</span></div>`;
+                    html += `<div class="split-word"><span class="stem-hl">${stem}</span><span class="suf-hl">${resSuf}</span></div>`;
+                }
                 if (data.warning) {
                     html += `<div class="status-alert blocked">${data.warning}</div>`;
                 } else {
