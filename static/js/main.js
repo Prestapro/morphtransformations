@@ -192,8 +192,9 @@ document.addEventListener("DOMContentLoaded", () => {
         builderPerson.disabled = true;
 
         if (activePos === "NOUN") {
-            // Nouns decline by number and case (gender is constant)
+            // Nouns decline by number, case, and allow cognate gender matching
             builderNumber.disabled = false;
+            builderGender.disabled = false;
             builderCase.disabled = false;
         } else if (["ADJF", "ADJS", "PRTF", "PRTS"].includes(activePos)) {
             // Adjectives and full participles decline by number, gender, and case

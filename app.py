@@ -10,12 +10,13 @@ PARENT_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PARENT_DIR))
 
 try:
-    from engine.language.inflector import inflect as db_inflect, agree_adjective, _get_conn
+    from engine.language.inflector import inflect as db_inflect, agree_adjective, _get_conn, generate_feminitive as db_generate_feminitive
 except ImportError:
     # Fallback/stub if not running inside the logos workspace
     db_inflect = None
     agree_adjective = None
     _get_conn = None
+    db_generate_feminitive = None
 
 app = FastAPI(
     title="Morphological Transformations Web Demo",
@@ -32,20 +33,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-VOWELS = set("аеёиоуыэюяАЕЁИОУЫЭЮЯ")
 
-OFFICIAL_WHITELIST = {
-    "учительница", "писательница", "актриса", "спортсменка", 
-    "студентка", "космонавтка", "докладчица", "участница", 
-    "помощница", "руководительница"
-}
-
-HOMONYM_OVERRIDES = {
-    "пилотка": "головной убор",
-    "электричка": "пригородный поезд",
-    "совка": "бабочка / совок",
-    "овсянка": "крупа / птица"
-}
 
 POS_NAMES = {
     "NOUN": "существительное",
@@ -79,98 +67,7 @@ class FeminitiveRequest(BaseModel):
     word: str
     style: str  # 'colloquial' or 'official'
 
-def check_homonym_collision(word: str) -> str | None:
-    """Check if the candidate word already exists as an inanimate object."""
-    if word in HOMONYM_OVERRIDES:
-        return HOMONYM_OVERRIDES[word]
-        
-    if _get_conn is not None:
-        try:
-            conn = _get_conn()
-            # Query if word exists with non-anim grammemes or inanim pos
-            rows = conn.execute(
-                "SELECT grammemes FROM paradigms WHERE form = ? LIMIT 5",
-                (word.lower(),)
-            ).fetchall()
-            for (gram,) in rows:
-                if "inan" in gram:
-                    return "существительное (неодуш.)"
-        except Exception:
-            pass
-    return None
 
-def check_is_established_feminitive(word: str) -> bool:
-    """Check if the generated word exists in the paradigm database as a feminine noun."""
-    if _get_conn is not None:
-        try:
-            conn = _get_conn()
-            row = conn.execute(
-                "SELECT 1 FROM paradigms WHERE form = ? AND pos = 'NOUN' AND grammemes LIKE '%femn%' LIMIT 1",
-                (word.lower(),)
-            ).fetchone()
-            return row is not None
-        except Exception:
-            pass
-    return False
-
-def check_is_inanimate(word: str) -> bool:
-    """Check if the input word exists in the database and is strictly inanimate (no anim tag)."""
-    if _get_conn is not None:
-        try:
-            conn = _get_conn()
-            rows = conn.execute(
-                "SELECT grammemes FROM paradigms WHERE form = ? LIMIT 10",
-                (word.lower(),)
-            ).fetchall()
-            if not rows:
-                return False
-            
-            has_inan = False
-            has_anim = False
-            for (gram,) in rows:
-                if "inan" in gram:
-                    has_inan = True
-                if "anim" in gram:
-                    has_anim = True
-            return has_inan and not has_anim
-        except Exception:
-            pass
-    return False
-
-def generate_feminitive_rule(masc: str) -> tuple[str, str, str]:
-    """Apply morphotactic rules to generate feminitive and return the rule explanation."""
-    masc_lower = masc.lower().strip()
-    
-    if masc_lower.endswith("ец"):
-        # Rule 1: ец ending
-        char_before = masc_lower[-3] if len(masc_lower) >= 3 else ""
-        if char_before in VOWELS:
-            fem = masc_lower[:-2] + "ейка"
-            rule = "Основа на 'ец' предваряется гласной -> суффикс меняется на 'ейка' (европеец -> европейка)"
-        else:
-            fem = masc_lower[:-2] + "анка" if masc_lower.endswith("анец") else masc_lower[:-2] + "ка"
-            rule = "Основа на 'ец' предваряется согласной -> суффикс меняется на 'ка' (американец -> американка)"
-        return fem, rule, "ец"
-        
-    if masc_lower.endswith("тель"):
-        fem = masc_lower[:-4] + "тельница"
-        rule = "Основа на 'тель' -> суффикс меняется на 'тельница' (учитель -> учительница)"
-        return fem, rule, "тель"
-        
-    if masc_lower.endswith("арь"):
-        fem = masc_lower[:-3] + "арка"
-        rule = "Основа на 'арь' -> суффикс меняется на 'арка' (пекарь -> пекарка)"
-        return fem, rule, "арь"
-        
-    if masc_lower.endswith("ик"):
-        fem = masc_lower[:-2] + "ица"
-        rule = "Основа на 'ик' -> суффикс меняется на 'ица' (художник -> художница)"
-        return fem, rule, "ик"
-        
-    # Default consonant ending
-    fem = masc_lower + "ка"
-    rule = "Основа оканчивается на согласную -> прибавление суффикса 'ка' (блогер -> блогерка)"
-    return fem, rule, "consonant"
 
 @app.post("/api/inflect")
 def api_inflect(req: InflectRequest):
@@ -335,71 +232,12 @@ def api_analyze(req: AnalyzeRequest):
 
 @app.post("/api/feminitive")
 def api_feminitive(req: FeminitiveRequest):
-    word = req.word.strip()
-    if not word:
-        return {"error": "Пустое слово"}
-        
-    # Check if the input word is strictly inanimate
-    if check_is_inanimate(word):
-        return {
-            "masculine": word,
-            "feminitive": word,
-            "stem": word,
-            "masc_suffix": "",
-            "fem_suffix": "",
-            "rule": "Слово является неодушевленным существительным.",
-            "style": req.style,
-            "blocked": True,
-            "message": f"Словообразование заблокировано! Слово '{word}' обозначает неодушевленный предмет. Демка предназначена для генерации феминитивов лиц и профессий.",
-            "collision": False,
-            "established": False
-        }
-        
-    fem_candidate, rule_desc, trigger_suf = generate_feminitive_rule(word)
-    
-    # Capitalization match
-    if word[0].isupper():
-        fem_candidate = fem_candidate.capitalize()
-        
-    # Check if candidate exists in dictionary (is established)
-    is_established = check_is_established_feminitive(fem_candidate)
-    
-    # Check style register
-    blocked = False
-    message = "Словосочетание семантически корректно."
-    
-    if req.style == "official":
-        if not is_established and fem_candidate.lower() not in OFFICIAL_WHITELIST:
-            blocked = True
-            message = f"В официально-деловом стиле феминитив '{fem_candidate}' заблокирован. Используйте мужской род: '{word}'."
-            
-    # Check homonym collision
-    collision = check_homonym_collision(fem_candidate)
-    if collision:
-        blocked = True
-        message = f"Словообразовательное столкновение! Феминитив '{fem_candidate}' заблокирован, так как это слово уже занято: {collision}."
-
-    # LCP Split calculation
-    i = 0
-    while i < min(len(word), len(fem_candidate)) and word[i] == fem_candidate[i]:
-        i += 1
-    stem = word[:i]
-    masc_suf = word[i:]
-    fem_suf = fem_candidate[i:]
-
-    return {
-        "masculine": word,
-        "feminitive": fem_candidate if not blocked else word,
-        "stem": stem,
-        "masc_suffix": masc_suf,
-        "fem_suffix": fem_suf,
-        "rule": rule_desc,
-        "style": req.style,
-        "blocked": blocked,
-        "message": message,
-        "collision": collision is not None,
-        "established": is_established
-    }
+    if db_generate_feminitive is None:
+        raise HTTPException(status_code=500, detail="Database inflector is unavailable.")
+    res = db_generate_feminitive(req.word, req.style)
+    if "error" in res:
+        return {"error": res["error"]}
+    return res
 
 @app.get("/api/rules")
 def api_rules():
