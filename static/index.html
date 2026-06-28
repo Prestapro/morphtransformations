@@ -24,6 +24,7 @@
         <nav class="tabs" role="tablist">
             <button class="tab-btn active" id="tab-feminitive" role="tab" aria-selected="true">Феминизатор</button>
             <button class="tab-btn" id="tab-inflect" role="tab" aria-selected="false">Инфлектор</button>
+            <button class="tab-btn" id="tab-executor" role="tab" aria-selected="false">Код на русском</button>
             <button class="tab-btn" id="tab-rules-catalog" role="tab" aria-selected="false">Карта правил</button>
         </nav>
 
@@ -145,6 +146,43 @@
                         <h3>Склоненная форма</h3>
                         <div id="inf-result-box" class="result-box empty">
                             <div class="empty-state">Введите слово для изменения формы</div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Section: Russian Code Executor -->
+            <section id="sec-executor" class="tab-content">
+                <div class="content-grid">
+                    <div class="control-panel">
+                        <h2>Исполнитель директив на русском</h2>
+                        <p class="section-desc">Напишите инструкцию на русском языке и выполните её. Например: <i>«если сейчас 10:33 покажи зеленый квадрат»</i> или <i>«покажи красный круг»</i>.</p>
+                        
+                        <div class="input-group">
+                            <label for="exec-input-code">Код / Инструкция</label>
+                            <textarea id="exec-input-code" placeholder="Введите код на русском..." style="width: 100%; min-height: 120px; padding: 14px; border-radius: 12px; background: rgba(255,255,255,0.03); border: 1px solid var(--border-color); color: var(--text-primary); font-family: 'Inter', monospace; font-size: 0.95rem; resize: vertical; outline: none; transition: var(--transition);" autocomplete="off">если сейчас 10:33 покажи зеленый квадрат</textarea>
+                        </div>
+
+                        <div class="input-group">
+                            <label for="exec-env-time">Имитировать время (ЧЧ:ММ)</label>
+                            <input type="text" id="exec-env-time" placeholder="Оставьте пустым для текущего времени..." value="10:33" style="padding: 10px 14px;" autocomplete="off">
+                        </div>
+
+                        <div class="input-group">
+                            <label>Среда вывода (Target)</label>
+                            <div class="style-toggle-container" id="exec-target-container" style="display: flex; gap: 8px;">
+                                <button class="style-btn active" id="btn-target-browser" style="flex: 1; padding: 10px; border-radius: 8px; border: 1px solid var(--border-color); background: rgba(255,255,255,0.02); color: var(--text-secondary); cursor: pointer; transition: var(--transition);">Браузер (HTML)</button>
+                                <button class="style-btn" id="btn-target-terminal" style="flex: 1; padding: 10px; border-radius: 8px; border: 1px solid var(--border-color); background: rgba(255,255,255,0.02); color: var(--text-secondary); cursor: pointer; transition: var(--transition);">Терминал (ANSI)</button>
+                            </div>
+                        </div>
+
+                        <button class="primary-btn" id="btn-run-execute">Выполнить код</button>
+                    </div>
+
+                    <div class="result-panel" style="display: flex; flex-direction: column; height: 100%;">
+                        <h3>Результат выполнения</h3>
+                        <div id="exec-result-box" class="result-box empty" style="display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 350px; flex-grow: 1; padding: 20px; border-radius: 16px; background: rgba(0, 0, 0, 0.2); border: 1px solid var(--border-color); overflow: auto;">
+                            <div class="empty-state">Введите код и нажмите «Выполнить»</div>
                         </div>
                     </div>
                 </div>

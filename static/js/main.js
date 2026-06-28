@@ -46,7 +46,8 @@ document.addEventListener("DOMContentLoaded", () => {
             tab.setAttribute("aria-selected", "true");
             
             const contentId = tab.id === "tab-feminitive" ? "sec-feminitive" : 
-                              tab.id === "tab-inflect" ? "sec-inflect" : "sec-rules";
+                              tab.id === "tab-inflect" ? "sec-inflect" : 
+                              tab.id === "tab-executor" ? "sec-executor" : "sec-rules";
             document.getElementById(contentId).classList.add("active");
         });
     });
@@ -461,6 +462,135 @@ document.addEventListener("DOMContentLoaded", () => {
             rulesContainer.innerHTML = `<div class="empty-state" style="color: var(--danger); width: 100%;">Не удалось загрузить карту правил.</div>`;
         }
     }
+
+    // -----------------------------------------------------------------------
+    // Execution UI Handlers
+    // -----------------------------------------------------------------------
+    let activeTarget = "browser";
+    const targetBrowserBtn = document.getElementById("btn-target-browser");
+    const targetTerminalBtn = document.getElementById("btn-target-terminal");
+
+    targetBrowserBtn.addEventListener("click", () => {
+        targetBrowserBtn.classList.add("active");
+        targetTerminalBtn.classList.remove("active");
+        activeTarget = "browser";
+    });
+
+    targetTerminalBtn.addEventListener("click", () => {
+        targetTerminalBtn.classList.add("active");
+        targetBrowserBtn.classList.remove("active");
+        activeTarget = "terminal";
+    });
+
+    const runExecuteBtn = document.getElementById("btn-run-execute");
+    const execInputCode = document.getElementById("exec-input-code");
+    const execEnvTime = document.getElementById("exec-env-time");
+    const execResultBox = document.getElementById("exec-result-box");
+
+    runExecuteBtn.addEventListener("click", async () => {
+        const code = execInputCode.value.trim();
+        const timeVal = execEnvTime.value.trim();
+        if (!code) {
+            execResultBox.innerHTML = `<div class="empty-state">Введите код/инструкцию</div>`;
+            execResultBox.classList.add("empty");
+            return;
+        }
+
+        execResultBox.innerHTML = `<div class="empty-state">Выполнение...</div>`;
+        execResultBox.classList.remove("empty");
+
+        try {
+            const data = await postData("/api/execute", {
+                code: code,
+                env: {
+                    current_time: timeVal || null
+                },
+                runtime: {
+                    target: activeTarget
+                }
+            });
+
+            if (data.status === "unsupported") {
+                execResultBox.innerHTML = `<div class="empty-state" style="color: var(--danger); font-weight: 500;">${data.message}</div>`;
+                return;
+            }
+
+            if (data.status === "condition_false") {
+                execResultBox.innerHTML = `
+                    <div style="width: 100%; text-align: center;">
+                        <div class="status-alert blocked" style="margin-bottom: 20px; font-weight: 500;">
+                            Условие не выполнено (время не совпадает)
+                        </div>
+                        <p style="color: var(--text-secondary); font-size: 0.9rem;">
+                            Ожидалось: <b>${timeVal || 'текущее'}</b>. Попробуйте изменить имитируемое время в настройках.
+                        </p>
+                    </div>
+                `;
+                return;
+            }
+
+            if (data.status === "success") {
+                let html = "";
+                // Show status alert
+                html += `
+                    <div class="status-alert success" style="margin-bottom: 24px; font-weight: 500; width: 100%; text-align: center;">
+                        Инструкция выполнена успешно: ${data.action || 'действие завершено'}
+                    </div>
+                `;
+
+                if (activeTarget === "browser") {
+                    // Browser output (SVG)
+                    html += `
+                        <div class="render-viewport" style="display: flex; align-items: center; justify-content: center; width: 100%; height: 200px;">
+                            ${data.payload}
+                        </div>
+                    `;
+                } else {
+                    // Terminal output (ANSI)
+                    const parsedAnsi = ansiToHtml(data.payload);
+                    html += `
+                        <div class="terminal-mockup" style="width: 100%; font-family: 'Inter', monospace; background: #000; color: #fff; padding: 20px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.1); line-height: 1.1; overflow-x: auto; text-align: left;">
+                            <div style="color: var(--text-secondary); margin-bottom: 12px; font-size: 0.8rem; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 6px;">[Terminal Console Output]</div>
+                            <pre style="margin: 0; font-family: monospace; white-space: pre;">${parsedAnsi}</pre>
+                        </div>
+                    `;
+                }
+
+                execResultBox.innerHTML = html;
+            }
+
+        } catch (err) {
+            console.error(err);
+            execResultBox.innerHTML = `<div class="empty-state" style="color: var(--danger);">Ошибка связи с сервером.</div>`;
+            execResultBox.classList.add("empty");
+        }
+    });
+
+    function ansiToHtml(ansiStr) {
+        let html = ansiStr;
+        // Escape HTML tags to prevent injections
+        html = html.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+        // TrueColor background: \x1b[48;2;R;G;Bm
+        const trueColorBgRegex = /\x1b\[48;2;(\d+);(\d+);(\d+)m/g;
+        html = html.replace(trueColorBgRegex, (match, r, g, b) => {
+            return `<span style="background-color: rgb(${r},${g},${b}); display: inline-block;">`;
+        });
+        // 16-color background (fallback): \x1b[4\d+m
+        const fallbackBgRegex = /\x1b\[4\d+m/g;
+        html = html.replace(fallbackBgRegex, '<span style="background-color: #2ecc71; display: inline-block;">');
+        // Reset: \x1b[0m
+        const resetRegex = /\x1b\[0m/g;
+        html = html.replace(resetRegex, '</span>');
+        
+        return html;
+    }
+
+    execInputCode.addEventListener("keypress", (e) => {
+        if (e.key === "Enter" && !e.shiftKey) {
+            e.preventDefault();
+            runExecuteBtn.click();
+        }
+    });
 
     // Initial load
     loadRulesCatalog();

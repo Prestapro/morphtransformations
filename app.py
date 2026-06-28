@@ -1,4 +1,6 @@
 import sys
+import re
+import datetime
 from pathlib import Path
 from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
@@ -275,6 +277,42 @@ def api_rules():
             }
         ]
     }
+
+class ExecuteRequest(BaseModel):
+    code: str
+    env: dict | None = None
+    runtime: dict | None = None
+
+
+@app.post("/api/execute")
+def api_execute(req: ExecuteRequest):
+    try:
+        from engine.codetools.intent_executor import handle_directive, TimeLiteral
+        
+        # Build environment and runtime settings
+        env_dict = req.env or {}
+        env = {}
+        # Parse time if passed as a string or fallback to current local time
+        if "current_time" in env_dict and env_dict["current_time"]:
+            ct = env_dict["current_time"]
+            match = re.search(r"(\d{1,2}):(\d{2})", str(ct))
+            if match:
+                env["current_time"] = TimeLiteral(hour=int(match.group(1)), minute=int(match.group(2)))
+        else:
+            now = datetime.datetime.now()
+            env["current_time"] = TimeLiteral(hour=now.hour, minute=now.minute)
+            
+        runtime = req.runtime or {"target": "browser"}
+        
+        result = handle_directive(req.code, env, runtime)
+        if result is None:
+            return {
+                "status": "unsupported",
+                "message": "Фраза не распознана как поддерживаемая директива или условие."
+            }
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 # Mount static folder
 app.mount("/", StaticFiles(directory="static", html=True), name="static")
