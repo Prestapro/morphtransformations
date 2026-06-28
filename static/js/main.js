@@ -484,7 +484,6 @@ document.addEventListener("DOMContentLoaded", () => {
 
     const runExecuteBtn = document.getElementById("btn-run-execute");
     const execInputCode = document.getElementById("exec-input-code");
-    const execEnvTime = document.getElementById("exec-env-time");
     const execResultBox = document.getElementById("exec-result-box");
 
     // Pre-populate with current local computer time dynamically
@@ -493,29 +492,27 @@ document.addEventListener("DOMContentLoaded", () => {
         const hrs = String(now.getHours()).padStart(2, '0');
         const mins = String(now.getMinutes()).padStart(2, '0');
         const timeStr = `${hrs}:${mins}`;
-        
-        execEnvTime.value = timeStr;
         execInputCode.value = `если сейчас ${timeStr} покажи зеленый квадрат`;
     };
     updateLocalTimeFields();
 
     runExecuteBtn.addEventListener("click", async () => {
         const code = execInputCode.value.trim();
-        let timeVal = execEnvTime.value.trim();
-        
-        // If field is cleared, fallback to the current local browser time
-        if (!timeVal) {
-            const now = new Date();
-            const hrs = String(now.getHours()).padStart(2, '0');
-            const mins = String(now.getMinutes()).padStart(2, '0');
-            timeVal = `${hrs}:${mins}`;
-        }
         
         if (!code) {
             execResultBox.innerHTML = `<div class="empty-state">Введите код/инструкцию</div>`;
             execResultBox.classList.add("empty");
             return;
         }
+
+        // Get actual client system parameters from OS settings
+        const now = new Date();
+        const hrs = String(now.getHours()).padStart(2, '0');
+        const mins = String(now.getMinutes()).padStart(2, '0');
+        const timeVal = `${hrs}:${mins}`;
+        const dateVal = now.toISOString().split('T')[0]; // YYYY-MM-DD
+        const langVal = navigator.language || "ru-RU";
+        const tzVal = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
 
         execResultBox.innerHTML = `<div class="empty-state">Выполнение...</div>`;
         execResultBox.classList.remove("empty");
@@ -524,7 +521,10 @@ document.addEventListener("DOMContentLoaded", () => {
             const data = await postData("/api/execute", {
                 code: code,
                 env: {
-                    current_time: timeVal
+                    current_time: timeVal,
+                    date: dateVal,
+                    language: langVal,
+                    timezone: tzVal
                 },
                 runtime: {
                     target: activeTarget
@@ -543,7 +543,7 @@ document.addEventListener("DOMContentLoaded", () => {
                             Условие не выполнено (время не совпадает)
                         </div>
                         <p style="color: var(--text-secondary); font-size: 0.9rem;">
-                            Ожидалось: <b>${timeVal || 'текущее'}</b>. Попробуйте изменить имитируемое время в настройках.
+                            Время на вашем компьютере: <b>${timeVal}</b>.
                         </p>
                     </div>
                 `;
