@@ -540,10 +540,10 @@ document.addEventListener("DOMContentLoaded", () => {
                 execResultBox.innerHTML = `
                     <div style="width: 100%; text-align: center;">
                         <div class="status-alert blocked" style="margin-bottom: 20px; font-weight: 500;">
-                            Условие не выполнено (время не совпадает)
+                            Условие не выполнено (время или дата не совпадают)
                         </div>
                         <p style="color: var(--text-secondary); font-size: 0.9rem;">
-                            Время на вашем компьютере: <b>${timeVal}</b>.
+                            Системное время: <b>${timeVal}</b>, дата: <b>${dateVal}</b>.
                         </p>
                     </div>
                 `;

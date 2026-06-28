@@ -301,6 +301,11 @@ def api_execute(req: ExecuteRequest):
         else:
             now = datetime.datetime.now()
             env["current_time"] = TimeLiteral(hour=now.hour, minute=now.minute)
+
+        # Forward other client environment parameters
+        for key in ("date", "language", "timezone"):
+            if key in env_dict:
+                env[key] = env_dict[key]
             
         runtime = req.runtime or {"target": "browser"}
         
