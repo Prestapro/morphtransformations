@@ -309,18 +309,88 @@ def api_execute(req: ExecuteRequest):
             
         runtime = req.runtime or {"target": "browser"}
         
-        result = handle_directive(req.code, env, runtime)
-        if result is None:
+        # 1. Try visual shape/time directives if explicitly requested
+        is_directive = False
+        directive_verbs = {"показать", "нарисовать", "отобразить", "вывести", "покажи", "нарисуй", "выведи", "отобрази"}
+        code_lower = req.code.lower()
+        if "если" in code_lower or any(verb in code_lower for verb in directive_verbs):
+            is_directive = True
+
+        if is_directive:
+            result = handle_directive(req.code, env, runtime)
+            if result is not None:
+                return result
+
+        # 2. Try geometry solving
+        try:
+            from engine.nlu.handlers.geometry_handler import handle_geometry
+            geom_res = handle_geometry(req.code)
+            if geom_res is not None:
+                return {
+                    "status": "success",
+                    "type": "terminal_ansi",
+                    "payload": geom_res,
+                    "svg": ""
+                }
+        except Exception:
+            pass
+
+        # 3. Try math routing and solving
+        try:
+            from engine.math.math_router import route_math, MathKind
+            from engine.math.math_normalizer import MathNormalizer
+            mq = route_math(req.code)
+            if mq.kind != MathKind.OTHER:
+                norm = MathNormalizer()
+                normalized = norm.normalize(req.code, mq.kind, mq.meta)
+                math_res = norm.evaluate(normalized)
+                if math_res is not None:
+                    if isinstance(math_res, bool):
+                        payload_text = "Верно" if math_res else "Неверно"
+                    else:
+                        payload_text = str(math_res)
+                    return {
+                        "status": "success",
+                        "type": "terminal_ansi",
+                        "payload": payload_text,
+                        "svg": ""
+                    }
+        except Exception:
+            pass
+
+        # 4. Try visual shape/time directives as a secondary fallback if not explicitly gated
+        if not is_directive:
+            result = handle_directive(req.code, env, runtime)
+            if result is not None:
+                return result
+
+        # 5. Fallback to general Russian code interpreter
+        from engine.codetools.rus_lang.interpreter import run_program
+        res = run_program(req.code)
+        if res["status"] == "success":
+            output_text = "\n".join(res["output"]) if res["output"] else "Код выполнен успешно (нет вывода)."
+            return {
+                "status": "success",
+                "type": "terminal_ansi",
+                "payload": output_text,
+                "svg": ""
+            }
+        elif res["status"] in ("parse_error", "runtime_error"):
             return {
                 "status": "unsupported",
-                "message": "Фраза не распознана как поддерживаемая директива или условие."
+                "message": f"Ошибка интерпретатора: {res['error']}"
             }
+        return {
+            "status": "unsupported",
+            "message": "Фраза не распознана как поддерживаемая директива или условие."
+        }
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 # Mount static folder
-app.mount("/", StaticFiles(directory="static", html=True), name="static")
+STATIC_DIR = Path(__file__).resolve().parent / "static"
+app.mount("/", StaticFiles(directory=str(STATIC_DIR), html=True), name="static")
 
 if __name__ == "__main__":
     import uvicorn
