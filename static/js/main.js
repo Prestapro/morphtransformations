@@ -487,9 +487,30 @@ document.addEventListener("DOMContentLoaded", () => {
     const execEnvTime = document.getElementById("exec-env-time");
     const execResultBox = document.getElementById("exec-result-box");
 
+    // Pre-populate with current local computer time dynamically
+    const updateLocalTimeFields = () => {
+        const now = new Date();
+        const hrs = String(now.getHours()).padStart(2, '0');
+        const mins = String(now.getMinutes()).padStart(2, '0');
+        const timeStr = `${hrs}:${mins}`;
+        
+        execEnvTime.value = timeStr;
+        execInputCode.value = `если сейчас ${timeStr} покажи зеленый квадрат`;
+    };
+    updateLocalTimeFields();
+
     runExecuteBtn.addEventListener("click", async () => {
         const code = execInputCode.value.trim();
-        const timeVal = execEnvTime.value.trim();
+        let timeVal = execEnvTime.value.trim();
+        
+        // If field is cleared, fallback to the current local browser time
+        if (!timeVal) {
+            const now = new Date();
+            const hrs = String(now.getHours()).padStart(2, '0');
+            const mins = String(now.getMinutes()).padStart(2, '0');
+            timeVal = `${hrs}:${mins}`;
+        }
+        
         if (!code) {
             execResultBox.innerHTML = `<div class="empty-state">Введите код/инструкцию</div>`;
             execResultBox.classList.add("empty");
@@ -503,7 +524,7 @@ document.addEventListener("DOMContentLoaded", () => {
             const data = await postData("/api/execute", {
                 code: code,
                 env: {
-                    current_time: timeVal || null
+                    current_time: timeVal
                 },
                 runtime: {
                     target: activeTarget
