@@ -560,14 +560,56 @@ document.addEventListener("DOMContentLoaded", () => {
                 `;
 
                 if (activeTarget === "browser") {
-                    // Browser output (SVG)
-                    html += `
-                        <div class="render-viewport" style="display: flex; align-items: center; justify-content: center; width: 100%; height: 200px;">
-                            ${data.payload}
-                        </div>
-                    `;
+                    if (data.type === "canvas_widget") {
+                        const canvasId = "result-canvas-" + Date.now();
+                        html += `
+                            <div class="render-viewport" style="display: flex; align-items: center; justify-content: center; width: 100%;">
+                                <canvas id="${canvasId}" width="${data.payload.width}" height="${data.payload.height}" style="background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.1); border-radius: 12px; box-shadow: 0 8px 32px rgba(0,0,0,0.4); max-width: 100%; aspect-ratio: 1;"></canvas>
+                            </div>
+                        `;
+                        execResultBox.innerHTML = html;
+                        const canvas = document.getElementById(canvasId);
+                        if (canvas) {
+                            const ctx = canvas.getContext("2d");
+                            ctx.clearRect(0, 0, canvas.width, canvas.height);
+                            const commands = data.payload.commands || [];
+                            commands.forEach(cmd => {
+                                if (cmd.op === "fillStyle") {
+                                    ctx.fillStyle = cmd.value;
+                                } else if (cmd.op === "strokeStyle") {
+                                    ctx.strokeStyle = cmd.value;
+                                } else if (cmd.op === "lineWidth") {
+                                    ctx.lineWidth = cmd.value;
+                                } else if (cmd.op === "beginPath") {
+                                    ctx.beginPath();
+                                } else if (cmd.op === "rect") {
+                                    ctx.rect(cmd.x, cmd.y, cmd.w, cmd.h);
+                                } else if (cmd.op === "fillRect") {
+                                    ctx.fillRect(cmd.x, cmd.y, cmd.w, cmd.h);
+                                } else if (cmd.op === "arc") {
+                                    ctx.arc(cmd.x, cmd.y, cmd.r, cmd.start, cmd.end);
+                                } else if (cmd.op === "fill") {
+                                    ctx.fill();
+                                } else if (cmd.op === "stroke") {
+                                    ctx.stroke();
+                                } else if (cmd.op === "moveTo") {
+                                    ctx.moveTo(cmd.x, cmd.y);
+                                } else if (cmd.op === "lineTo") {
+                                    ctx.lineTo(cmd.x, cmd.y);
+                                } else if (cmd.op === "closePath") {
+                                    ctx.closePath();
+                                }
+                            });
+                        }
+                    } else {
+                        html += `
+                            <div class="render-viewport" style="display: flex; align-items: center; justify-content: center; width: 100%; height: 200px;">
+                                ${data.payload}
+                            </div>
+                        `;
+                        execResultBox.innerHTML = html;
+                    }
                 } else {
-                    // Terminal output (ANSI)
                     const parsedAnsi = ansiToHtml(data.payload);
                     html += `
                         <div class="terminal-mockup" style="width: 100%; font-family: 'Inter', monospace; background: #000; color: #fff; padding: 20px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.1); line-height: 1.1; overflow-x: auto; text-align: left;">
@@ -575,9 +617,8 @@ document.addEventListener("DOMContentLoaded", () => {
                             <pre style="margin: 0; font-family: monospace; white-space: pre;">${parsedAnsi}</pre>
                         </div>
                     `;
+                    execResultBox.innerHTML = html;
                 }
-
-                execResultBox.innerHTML = html;
             }
 
         } catch (err) {
