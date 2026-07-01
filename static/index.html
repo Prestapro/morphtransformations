@@ -29,6 +29,7 @@
             <button class="tab-btn" id="tab-paradigm" role="tab" aria-selected="false">Парадигма</button>
             <button class="tab-btn" id="tab-suffix-stats" role="tab" aria-selected="false">Суффиксы</button>
             <button class="tab-btn" id="tab-catalog" role="tab" aria-selected="false">Каталог</button>
+            <button class="tab-btn" id="tab-morph-search" role="tab" aria-selected="false">Поиск</button>
             <button class="tab-btn" id="tab-executor" role="tab" aria-selected="false">Код на русском</button>
             <button class="tab-btn" id="tab-rules-catalog" role="tab" aria-selected="false">Карта правил</button>
         </nav>
@@ -235,6 +236,37 @@
                         <h3>Распределение P(POS|суффикс)</h3>
                         <div id="suf-result-box" class="result-box empty" style="max-height: 500px; overflow-y: auto;">
                             <div class="empty-state">Введите суффикс для анализа</div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Section: Morpheme Search -->
+            <section id="sec-morph-search" class="tab-content">
+                <div class="content-grid">
+                    <div class="control-panel">
+                        <h2>Поиск по морфеме</h2>
+                        <p class="section-desc">Введите приставку, суффикс, окончание или корень — увидите все слова из словаря Тихонова (100K), которые содержат эту морфему.</p>
+                        <div class="input-group">
+                            <label for="msrch-input">Морфема</label>
+                            <input type="text" id="msrch-input" placeholder="Например: пере, ник, ость, ий..." autocomplete="off">
+                        </div>
+                        <div class="input-group">
+                            <label>Тип морфемы</label>
+                            <div class="style-toggle-container" style="display: flex; flex-wrap: wrap; gap: 6px;">
+                                <button class="style-btn active" id="btn-msrch-any">Все</button>
+                                <button class="style-btn" id="btn-msrch-prefix">Приставка</button>
+                                <button class="style-btn" id="btn-msrch-suffix">Суффикс</button>
+                                <button class="style-btn" id="btn-msrch-ending">Окончание</button>
+                                <button class="style-btn" id="btn-msrch-root">Корень</button>
+                            </div>
+                        </div>
+                        <button class="primary-btn" id="btn-run-msrch">Найти слова</button>
+                    </div>
+                    <div class="result-panel">
+                        <h3>Слова с этой морфемой</h3>
+                        <div id="msrch-result-box" class="result-box empty" style="max-height: 500px; overflow-y: auto;">
+                            <div class="empty-state">Введите морфему и нажмите «Найти»</div>
                         </div>
                     </div>
                 </div>

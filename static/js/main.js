@@ -53,6 +53,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 'tab-paradigm': 'sec-paradigm',
                 'tab-suffix-stats': 'sec-suffix-stats',
                 'tab-catalog': 'sec-catalog',
+                'tab-morph-search': 'sec-morph-search',
                 'tab-executor': 'sec-executor',
                 'tab-rules-catalog': 'sec-rules'
             };
@@ -894,6 +895,87 @@ document.addEventListener("DOMContentLoaded", () => {
             runExecuteBtn.click();
         }
     });
+
+    // -----------------------------------------------------------------------
+    // Morpheme Search (reverse lookup)
+    // -----------------------------------------------------------------------
+    const msrchInput = document.getElementById('msrch-input');
+    const msrchResultBox = document.getElementById('msrch-result-box');
+    const btnMsrch = document.getElementById('btn-run-msrch');
+    let activeMsrchType = 'any';
+
+    const TYPE_LABELS = {
+        prefix: 'приставка',
+        suffix: 'суффикс',
+        ending: 'окончание',
+        root: 'корень'
+    };
+    const TYPE_COLORS = {
+        prefix: { bg: 'rgba(99, 102, 241, 0.15)', border: 'rgba(99, 102, 241, 0.35)', color: '#818cf8' },
+        suffix: { bg: 'rgba(16, 185, 129, 0.15)', border: 'rgba(16, 185, 129, 0.35)', color: '#34d399' },
+        ending: { bg: 'rgba(251, 191, 36, 0.15)', border: 'rgba(251, 191, 36, 0.35)', color: '#fbbf24' },
+        root: { bg: 'rgba(239, 68, 68, 0.15)', border: 'rgba(239, 68, 68, 0.35)', color: '#f87171' }
+    };
+
+    const msrchBtns = {
+        any: document.getElementById('btn-msrch-any'),
+        prefix: document.getElementById('btn-msrch-prefix'),
+        suffix: document.getElementById('btn-msrch-suffix'),
+        ending: document.getElementById('btn-msrch-ending'),
+        root: document.getElementById('btn-msrch-root')
+    };
+
+    Object.entries(msrchBtns).forEach(([key, btn]) => {
+        btn.addEventListener('click', () => {
+            Object.values(msrchBtns).forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            activeMsrchType = key;
+        });
+    });
+
+    btnMsrch.addEventListener('click', async () => {
+        const morpheme = msrchInput.value.trim();
+        if (!morpheme) { msrchResultBox.innerHTML = '<div class="empty-state">Введите морфему</div>'; return; }
+        msrchResultBox.innerHTML = '<div class="empty-state">Поиск...</div>';
+        try {
+            const data = await postData('/api/morpheme_search', { morpheme, morpheme_type: activeMsrchType });
+            if (data.total === 0) {
+                msrchResultBox.innerHTML = `<div class="empty-state">Морфема «${morpheme}» не найдена в словаре</div>`;
+                return;
+            }
+
+            let html = `<div style="text-align: center; margin-bottom: 16px;">
+                <span style="font-size: 1.4rem; font-weight: 700; color: var(--text-primary); font-family: 'Outfit';">${morpheme}</span>
+                <span style="font-size: 0.85rem; color: var(--text-secondary); margin-left: 8px;">${data.total} слов</span>
+            </div>`;
+
+            for (const [type, words] of Object.entries(data.results)) {
+                const tc = TYPE_COLORS[type] || TYPE_COLORS.root;
+                const label = TYPE_LABELS[type] || type;
+                html += `<div style="margin-bottom: 20px;">
+                    <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 10px;">
+                        <span style="font-size: 0.8rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: ${tc.color};">Как ${label}</span>
+                        <span style="font-size: 0.75rem; color: var(--text-secondary);">(${words.length})</span>
+                    </div>
+                    <div style="display: flex; flex-wrap: wrap; gap: 6px;">`;
+                const shown = words.slice(0, 200);
+                shown.forEach(w => {
+                    html += `<span style="padding: 4px 12px; border-radius: 16px; font-size: 0.85rem; font-weight: 500; background: ${tc.bg}; border: 1px solid ${tc.border}; color: var(--text-primary); cursor: default; transition: var(--transition);">${w}</span>`;
+                });
+                if (words.length > 200) {
+                    html += `<span style="padding: 4px 12px; border-radius: 16px; font-size: 0.85rem; color: var(--text-secondary);">...+${words.length - 200} ещё</span>`;
+                }
+                html += `</div></div>`;
+            }
+
+            msrchResultBox.innerHTML = html;
+            msrchResultBox.classList.remove('empty');
+        } catch (err) {
+            console.error(err);
+            msrchResultBox.innerHTML = '<div class="empty-state" style="color: var(--danger);">Ошибка связи с сервером.</div>';
+        }
+    });
+    msrchInput.addEventListener('keypress', (e) => { if (e.key === 'Enter') btnMsrch.click(); });
 
     // Initial load
     loadRulesCatalog();

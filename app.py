@@ -84,6 +84,10 @@ class ParadigmRequest(BaseModel):
 class SuffixStatsRequest(BaseModel):
     suffix: str
 
+class MorphemeSearchRequest(BaseModel):
+    morpheme: str
+    morpheme_type: str  # 'prefix', 'suffix', 'ending', 'root', 'any'
+
 
 
 @app.post("/api/inflect")
@@ -543,6 +547,77 @@ def api_morphemes_catalog():
             with open(filepath, 'r', encoding='utf-8') as f:
                 result[name] = yaml.safe_load(f)
         return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# --------------- Morpheme reverse index ---------------
+
+_morpheme_index = None
+def _get_morpheme_index():
+    """Build inverted index: (type, morpheme) -> list of words."""
+    global _morpheme_index
+    if _morpheme_index is not None:
+        return _morpheme_index
+
+    data = _get_tikhonov_data()
+    dictionary = data.get('dictionary', {})
+
+    idx = {}  # (type, morpheme) -> [word1, word2, ...]
+    for word, entry in dictionary.items():
+        # Prefixes
+        for p in entry.get('prefixes', []):
+            p_clean = p.strip().lower()
+            if p_clean:
+                idx.setdefault(('prefix', p_clean), []).append(word)
+        # Suffixes
+        for s in entry.get('suffixes', []):
+            s_clean = s.strip().lower()
+            # Skip dirty entries with annotations
+            if s_clean and '(' not in s_clean and len(s_clean) < 15:
+                idx.setdefault(('suffix', s_clean), []).append(word)
+        # Ending
+        ending = entry.get('ending', '').strip().lower()
+        if ending:
+            idx.setdefault(('ending', ending), []).append(word)
+        # Root
+        root = entry.get('root', '').strip().lower()
+        if root:
+            idx.setdefault(('root', root), []).append(word)
+
+    _morpheme_index = idx
+    return _morpheme_index
+
+
+@app.post("/api/morpheme_search")
+def api_morpheme_search(req: MorphemeSearchRequest):
+    try:
+        idx = _get_morpheme_index()
+        morpheme = req.morpheme.strip().lower()
+        mtype = req.morpheme_type.strip().lower()
+
+        if mtype == 'any':
+            # Search across all types
+            results = {}
+            for t in ('prefix', 'suffix', 'ending', 'root'):
+                words = idx.get((t, morpheme), [])
+                if words:
+                    results[t] = words
+            total = sum(len(v) for v in results.values())
+            return {
+                "morpheme": morpheme,
+                "type": "any",
+                "results": results,
+                "total": total
+            }
+        else:
+            words = idx.get((mtype, morpheme), [])
+            return {
+                "morpheme": morpheme,
+                "type": mtype,
+                "results": {mtype: words} if words else {},
+                "total": len(words)
+            }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
