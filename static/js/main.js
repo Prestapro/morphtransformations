@@ -983,18 +983,27 @@ document.addEventListener("DOMContentLoaded", () => {
         });
     });
 
-    btnMsrch.addEventListener('click', async () => {
-        const morpheme = msrchInput.value.trim();
+    const chkNoLimit = document.getElementById('chk-no-limit');
+
+    async function _runMsrchSearch(morpheme, wordFilter) {
         msrchResultBox.innerHTML = '<div class="empty-state">Поиск...</div>';
 
         const isOpenCorpora = useOpenCorpora;
+        const noLimit = chkNoLimit && chkNoLimit.checked;
 
         try {
             let data;
             if (isOpenCorpora) {
                 const stMap = { any: 'any', prefix: 'prefix', suffix: 'suffix', ending: 'ending', root: 'any' };
                 const searchType = stMap[activeMsrchType] || 'ending';
-                data = await postData('/api/ending_search', { ending: morpheme, pos: activeEndPos, search_type: searchType });
+                const params = {
+                    ending: morpheme,
+                    pos: activeEndPos,
+                    search_type: searchType,
+                };
+                if (wordFilter) params.word_filter = wordFilter;
+                if (noLimit) params.limit = 0;
+                data = await postData('/api/ending_search', params);
             } else {
                 data = await postData('/api/morpheme_search', { morpheme, morpheme_type: activeMsrchType });
             }
@@ -1022,13 +1031,14 @@ document.addEventListener("DOMContentLoaded", () => {
             const covTotal = cov.total_shown || 0;
             const covColor = covPct >= 80 ? '#10b981' : covPct >= 50 ? '#eab308' : '#f43f5e';
             const covText = covTotal > 0 ? ` · Покрытие: ${covDecomp}/${covTotal} (${covPct}%)` : '';
-            const shownNote = (covTotal > 0 && covTotal < data.total) ? ` · <span style="color:#94a3b8;font-size:0.8em">показано ${covTotal.toLocaleString('ru-RU')} из ${data.total.toLocaleString('ru-RU')}</span>` : '';
+
+            const allWords = [];
+            for (const words of Object.values(data.results)) { allWords.push(...words); }
+            const shownNote = (allWords.length < data.total) ? ` · <span style="color:#94a3b8;font-size:0.8em">показано ${allWords.length.toLocaleString('ru-RU')} из ${data.total.toLocaleString('ru-RU')}</span>` : '';
 
             msrchHeader.innerHTML = `${modeLabel} «${morpheme || '*'}» — ${data.total.toLocaleString('ru-RU')} (${sourceLabel})<span style="color:${covColor};font-size:0.85em">${covText}</span>${shownNote}`;
 
             // Download buttons
-            const allWords = [];
-            for (const words of Object.values(data.results)) { allWords.push(...words); }
             const uncovered = data.uncovered || [];
 
             const _downloadFile = (filename, lines) => {
@@ -1067,10 +1077,9 @@ document.addEventListener("DOMContentLoaded", () => {
                 html += `<div data-pos-group="${type}" style="margin-bottom: 20px;">
                     <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 10px;">
                         <span style="font-size: 0.8rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: ${color};">${label}</span>
-                        <span class="pos-group-count" style="font-size: 0.75rem; color: var(--text-secondary);">(${words.length}${words.length >= 1000 ? '+' : ''})</span>
+                        <span class="pos-group-count" style="font-size: 0.75rem; color: var(--text-secondary);">(${words.length})</span>
                     </div>
                     <div style="columns: 3; column-gap: 16px;">`;
-                const shown = sorted.slice(0, 1000);
                 const mLower = morpheme.toLowerCase();
                 const decomp = data.decomp || {};
                 const MORPH_COLORS = {
@@ -1080,7 +1089,7 @@ document.addEventListener("DOMContentLoaded", () => {
                     ENDING: '#fbbf24',
                     LINK: '#f472b6'
                 };
-                shown.forEach(w => {
+                sorted.forEach(w => {
                     let display;
                     const parts = decomp[w];
                     if (parts && parts.length > 0) {
@@ -1096,9 +1105,6 @@ document.addEventListener("DOMContentLoaded", () => {
                     }
                     html += `<div class="msrch-word-item" data-word="${w.toLowerCase()}" style="break-inside: avoid; padding: 3px 0 3px 10px; margin-bottom: 2px; font-size: 0.85rem; color: var(--text-primary); border-left: 2px solid ${border};">${display}</div>`;
                 });
-                if (words.length > 1000) {
-                    html += `<div style="padding: 6px 0; font-size: 0.85rem; color: var(--text-secondary); font-style: italic;">...ещё ${words.length - 1000}</div>`;
-                }
                 html += `</div></div>`;
             }
 
@@ -1107,7 +1113,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
             // Show word filter
             msrchFilterRow.style.display = 'block';
-            msrchWordFilter.value = '';
+            if (!wordFilter) msrchWordFilter.value = '';
 
             // Attach download handlers
             const dlAllBtn = document.getElementById('dl-all-btn');
@@ -1118,31 +1124,37 @@ document.addEventListener("DOMContentLoaded", () => {
             console.error(err);
             msrchResultBox.innerHTML = '<div class="empty-state" style="color: var(--danger);">Ошибка связи с сервером.</div>';
         }
-    });
+    }
+
+    btnMsrch.addEventListener('click', () => _runMsrchSearch(msrchInput.value.trim(), ''));
     msrchInput.addEventListener('keypress', (e) => { if (e.key === 'Enter') btnMsrch.click(); });
 
-    // Word filter — client-side instant filtering
+    // Word filter — hybrid: client-side for Tikhonov, server-side for OpenCorpora
+    let _wordFilterTimer = null;
     msrchWordFilter.addEventListener('input', () => {
         const q = msrchWordFilter.value.trim().toLowerCase();
-        const items = msrchResultBox.querySelectorAll('.msrch-word-item');
-        let shown = 0, hidden = 0;
-        items.forEach(el => {
-            const w = el.getAttribute('data-word') || '';
-            if (!q || w.includes(q)) {
-                el.style.display = '';
-                shown++;
-            } else {
-                el.style.display = 'none';
-                hidden++;
-            }
-        });
-        // Update POS group headers with filtered counts
-        msrchResultBox.querySelectorAll('[data-pos-group]').forEach(grp => {
-            const visibleInGroup = grp.querySelectorAll('.msrch-word-item:not([style*="display: none"])');
-            const countEl = grp.querySelector('.pos-group-count');
-            if (countEl) countEl.textContent = `(${visibleInGroup.length})`;
-            grp.style.display = visibleInGroup.length === 0 ? 'none' : '';
-        });
+
+        if (!useOpenCorpora) {
+            // Client-side filtering (Tikhonov — small dataset)
+            const items = msrchResultBox.querySelectorAll('.msrch-word-item');
+            items.forEach(el => {
+                const w = el.getAttribute('data-word') || '';
+                el.style.display = (!q || w.includes(q)) ? '' : 'none';
+            });
+            msrchResultBox.querySelectorAll('[data-pos-group]').forEach(grp => {
+                const vis = grp.querySelectorAll('.msrch-word-item:not([style*="display: none"])');
+                const countEl = grp.querySelector('.pos-group-count');
+                if (countEl) countEl.textContent = `(${vis.length})`;
+                grp.style.display = vis.length === 0 ? 'none' : '';
+            });
+        } else {
+            // Server-side filtering (OpenCorpora — debounced re-query)
+            clearTimeout(_wordFilterTimer);
+            _wordFilterTimer = setTimeout(() => {
+                // Re-trigger search with word_filter
+                _runMsrchSearch(msrchInput.value.trim(), q);
+            }, 400);
+        }
     });
 
     // Initial load

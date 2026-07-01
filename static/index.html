@@ -284,7 +284,13 @@
                                 <button class="style-btn" data-pos="COMP">Сравн.</button>
                             </div>
                         </div>
-                        <button class="primary-btn" id="btn-run-msrch">Найти слова</button>
+                        <div style="display: flex; align-items: center; gap: 12px; margin-top: 4px;">
+                            <button class="primary-btn" id="btn-run-msrch">Найти слова</button>
+                            <label style="display: flex; align-items: center; gap: 6px; font-size: 0.8rem; color: var(--text-secondary); cursor: pointer;">
+                                <input type="checkbox" id="chk-no-limit" style="accent-color: #818cf8; width: 16px; height: 16px;">
+                                Без лимита
+                            </label>
+                        </div>
                     </div>
                     <div class="result-panel">
                         <h3 id="msrch-header">Слова с этой морфемой</h3>

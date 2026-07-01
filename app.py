@@ -648,6 +648,8 @@ class EndingSearchRequest(BaseModel):
     ending: str
     pos: str = "any"
     search_type: str = "ending"  # prefix, suffix, ending, any
+    word_filter: str = ""  # additional substring filter on form
+    limit: int = 5000  # max results per POS group
 
 _PARADIGMS_DB = os.path.join(str(PARENT_DIR), 'data', 'language', 'ru_paradigms.sqlite3')
 
@@ -676,12 +678,25 @@ async def api_ending_search(req: EndingSearchRequest):
             pattern = f'%{ending}'
         else:
             pattern = f'%{ending}%'
-        limit = 1000
+        limit = req.limit
+        if limit <= 0:
+            limit = None  # unlimited
+        else:
+            limit = min(limit, 50000)  # cap at 50K per POS
+        word_filter = req.word_filter.strip().lower()
+
+        # Build additional word filter clause
+        extra_where = ""
+        extra_params = []
+        if word_filter:
+            extra_where = " AND form LIKE ?"
+            extra_params = [f'%{word_filter}%']
+            limit = min(limit, 50000)  # allow more with filter
 
         if pos == "ANY" or pos == "":
             c.execute(
-                "SELECT pos, form FROM (SELECT DISTINCT pos, form FROM paradigms WHERE form LIKE ?) ORDER BY pos, form",
-                (pattern,)
+                f"SELECT pos, form FROM (SELECT DISTINCT pos, form FROM paradigms WHERE form LIKE ?{extra_where}) ORDER BY pos, form",
+                (pattern, *extra_params)
             )
             rows = c.fetchall()
             results = {}
@@ -693,8 +708,8 @@ async def api_ending_search(req: EndingSearchRequest):
                 results[p] = sorted(results[p])[:limit]
         else:
             c.execute(
-                "SELECT DISTINCT form FROM paradigms WHERE pos = ? AND form LIKE ? ORDER BY form",
-                (pos, pattern)
+                f"SELECT DISTINCT form FROM paradigms WHERE pos = ? AND form LIKE ?{extra_where} ORDER BY form",
+                (pos, pattern, *extra_params)
             )
             rows = c.fetchall()
             forms = [r[0] for r in rows]
