@@ -24,6 +24,11 @@
         <nav class="tabs" role="tablist">
             <button class="tab-btn active" id="tab-feminitive" role="tab" aria-selected="true">Феминизатор</button>
             <button class="tab-btn" id="tab-inflect" role="tab" aria-selected="false">Инфлектор</button>
+            <button class="tab-btn" id="tab-decompose" role="tab" aria-selected="false">Морфемы</button>
+            <button class="tab-btn" id="tab-cognates" role="tab" aria-selected="false">Родственные</button>
+            <button class="tab-btn" id="tab-paradigm" role="tab" aria-selected="false">Парадигма</button>
+            <button class="tab-btn" id="tab-suffix-stats" role="tab" aria-selected="false">Суффиксы</button>
+            <button class="tab-btn" id="tab-catalog" role="tab" aria-selected="false">Каталог</button>
             <button class="tab-btn" id="tab-executor" role="tab" aria-selected="false">Код на русском</button>
             <button class="tab-btn" id="tab-rules-catalog" role="tab" aria-selected="false">Карта правил</button>
         </nav>
@@ -148,6 +153,104 @@
                             <div class="empty-state">Введите слово для изменения формы</div>
                         </div>
                     </div>
+                </div>
+            </section>
+
+            <!-- Section: Morpheme Decomposition -->
+            <section id="sec-decompose" class="tab-content">
+                <div class="content-grid">
+                    <div class="control-panel">
+                        <h2>Морфемный разбор</h2>
+                        <p class="section-desc">Разложение слова на морфемы по словарю Тихонова (102K слов, 15K корней).</p>
+                        <div class="input-group">
+                            <label for="dec-input-word">Слово</label>
+                            <input type="text" id="dec-input-word" placeholder="Например: перечитывающий, безработный..." autocomplete="off">
+                        </div>
+                        <button class="primary-btn" id="btn-run-decompose">Разобрать</button>
+                    </div>
+                    <div class="result-panel">
+                        <h3>Морфемная структура</h3>
+                        <div id="dec-result-box" class="result-box empty">
+                            <div class="empty-state">Введите слово для морфемного разбора</div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Section: Cognate Words -->
+            <section id="sec-cognates" class="tab-content">
+                <div class="content-grid">
+                    <div class="control-panel">
+                        <h2>Родственные слова</h2>
+                        <p class="section-desc">Все однокоренные слова из словаря Тихонова по общему корню.</p>
+                        <div class="input-group">
+                            <label for="cog-input-word">Слово</label>
+                            <input type="text" id="cog-input-word" placeholder="Например: бежать, писать, дом..." autocomplete="off">
+                        </div>
+                        <button class="primary-btn" id="btn-run-cognates">Найти</button>
+                    </div>
+                    <div class="result-panel">
+                        <h3>Однокоренные слова</h3>
+                        <div id="cog-result-box" class="result-box empty">
+                            <div class="empty-state">Введите слово для поиска однокоренных</div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Section: Full Paradigm -->
+            <section id="sec-paradigm" class="tab-content">
+                <div class="content-grid">
+                    <div class="control-panel">
+                        <h2>Полная парадигма</h2>
+                        <p class="section-desc">Все словоформы леммы из базы парадигм (5.14M форм, 182K лемм).</p>
+                        <div class="input-group">
+                            <label for="par-input-word">Слово (лемма)</label>
+                            <input type="text" id="par-input-word" placeholder="Например: дом, читать, красивый..." autocomplete="off">
+                        </div>
+                        <button class="primary-btn" id="btn-run-paradigm">Показать парадигму</button>
+                    </div>
+                    <div class="result-panel">
+                        <h3>Таблица словоформ</h3>
+                        <div id="par-result-box" class="result-box empty" style="max-height: 500px; overflow-y: auto;">
+                            <div class="empty-state">Введите лемму для просмотра парадигмы</div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Section: Suffix Statistics -->
+            <section id="sec-suffix-stats" class="tab-content">
+                <div class="content-grid">
+                    <div class="control-panel">
+                        <h2>Статистика суффиксов</h2>
+                        <p class="section-desc">Вероятность части речи по суффиксу (103K записей из корпуса).</p>
+                        <div class="input-group">
+                            <label for="suf-input">Суффикс / окончание</label>
+                            <input type="text" id="suf-input" placeholder="Например: ость, ый, ать..." autocomplete="off">
+                        </div>
+                        <button class="primary-btn" id="btn-run-suffix">Анализировать</button>
+                    </div>
+                    <div class="result-panel">
+                        <h3>Распределение P(POS|суффикс)</h3>
+                        <div id="suf-result-box" class="result-box empty" style="max-height: 500px; overflow-y: auto;">
+                            <div class="empty-state">Введите суффикс для анализа</div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Section: Morpheme Catalog -->
+            <section id="sec-catalog" class="tab-content">
+                <h2>Каталог морфем</h2>
+                <p class="section-desc">Полный справочник суффиксов, приставок и окончаний по частям речи (из YAML).</p>
+                <div class="catalog-tabs" style="display: flex; gap: 8px; margin: 20px 0;">
+                    <button class="style-btn active" id="btn-cat-suffixes">Суффиксы</button>
+                    <button class="style-btn" id="btn-cat-prefixes">Приставки</button>
+                    <button class="style-btn" id="btn-cat-endings">Окончания</button>
+                </div>
+                <div id="catalog-content" class="rules-grid" style="max-height: 600px; overflow-y: auto;">
+                    <div class="loading-state">Загрузка каталога...</div>
                 </div>
             </section>
 

@@ -45,9 +45,18 @@ document.addEventListener("DOMContentLoaded", () => {
             tab.classList.add("active");
             tab.setAttribute("aria-selected", "true");
             
-            const contentId = tab.id === "tab-feminitive" ? "sec-feminitive" : 
-                              tab.id === "tab-inflect" ? "sec-inflect" : 
-                              tab.id === "tab-executor" ? "sec-executor" : "sec-rules";
+            const tabMap = {
+                'tab-feminitive': 'sec-feminitive',
+                'tab-inflect': 'sec-inflect',
+                'tab-decompose': 'sec-decompose',
+                'tab-cognates': 'sec-cognates',
+                'tab-paradigm': 'sec-paradigm',
+                'tab-suffix-stats': 'sec-suffix-stats',
+                'tab-catalog': 'sec-catalog',
+                'tab-executor': 'sec-executor',
+                'tab-rules-catalog': 'sec-rules'
+            };
+            const contentId = tabMap[tab.id] || 'sec-feminitive';
             document.getElementById(contentId).classList.add("active");
         });
     });
@@ -193,20 +202,16 @@ document.addEventListener("DOMContentLoaded", () => {
         builderPerson.disabled = true;
 
         if (activePos === "NOUN") {
-            // Nouns decline by number, case, and allow cognate gender matching
             builderNumber.disabled = false;
             builderGender.disabled = false;
             builderCase.disabled = false;
         } else if (["ADJF", "ADJS", "PRTF", "PRTS"].includes(activePos)) {
-            // Adjectives and full participles decline by number, gender, and case
-            // Short adjectives/participles do not decline by case
             builderNumber.disabled = false;
             builderGender.disabled = false;
             if (activePos === "ADJF" || activePos === "PRTF") {
                 builderCase.disabled = false;
             }
         } else if (activePos === "VERB") {
-            // Finite verbs conjugate by tense, number, person (present/future) and gender (past)
             builderTense.disabled = false;
             builderNumber.disabled = false;
             
@@ -215,21 +220,16 @@ document.addEventListener("DOMContentLoaded", () => {
             } else if (builderTense.value === "pres" || builderTense.value === "futr") {
                 builderPerson.disabled = false;
             } else {
-                // Tense not selected: allow both gender and person until one is chosen
                 builderGender.disabled = false;
                 builderPerson.disabled = false;
             }
         } else if (activePos === "NUMR" || activePos === "NPRO") {
-            // Numerals and pronouns decline by case, and some by gender/number
             builderCase.disabled = false;
             builderNumber.disabled = false;
             builderGender.disabled = false;
-        } else {
-            // Invariable parts of speech (INFN, GRND, COMP, ADVB, PRED, PREP, CONJ, PRCL, INTJ)
-            // remain completely disabled.
         }
 
-        // Clear values of disabled elements to avoid submitting hidden state
+        // Clear values of disabled elements
         if (builderNumber.disabled) builderNumber.value = "";
         if (builderGender.disabled) builderGender.value = "";
         if (builderCase.disabled) builderCase.value = "";
@@ -326,7 +326,6 @@ document.addEventListener("DOMContentLoaded", () => {
                 return;
             }
 
-            // Build HTML
             let html = "";
 
             if (data.interpretations && data.interpretations.length > 0) {
@@ -337,7 +336,6 @@ document.addEventListener("DOMContentLoaded", () => {
                 }
 
                 data.interpretations.forEach(inter => {
-                    const statusClass = inter.applicable ? "success" : "blocked";
                     const isApplicableText = inter.applicable ? "успешно" : "неприменимо";
                     
                     html += `
@@ -438,6 +436,277 @@ document.addEventListener("DOMContentLoaded", () => {
     });
 
     // -----------------------------------------------------------------------
+    // Morpheme Decomposition
+    // -----------------------------------------------------------------------
+    const MORPH_COLORS = {
+        PREFIX: { bg: 'rgba(99, 102, 241, 0.2)', border: 'rgba(99, 102, 241, 0.5)', color: '#818cf8', label: 'приставка' },
+        ROOT: { bg: 'rgba(239, 68, 68, 0.2)', border: 'rgba(239, 68, 68, 0.5)', color: '#f87171', label: 'корень' },
+        SUFFIX: { bg: 'rgba(16, 185, 129, 0.2)', border: 'rgba(16, 185, 129, 0.5)', color: '#34d399', label: 'суффикс' },
+        ENDING: { bg: 'rgba(251, 191, 36, 0.2)', border: 'rgba(251, 191, 36, 0.5)', color: '#fbbf24', label: 'окончание' },
+        LINKING: { bg: 'rgba(156, 163, 175, 0.2)', border: 'rgba(156, 163, 175, 0.5)', color: '#9ca3af', label: 'соед. гласная' }
+    };
+
+    const decInput = document.getElementById("dec-input-word");
+    const decResultBox = document.getElementById("dec-result-box");
+    const btnDecompose = document.getElementById("btn-run-decompose");
+
+    btnDecompose.addEventListener("click", async () => {
+        const word = decInput.value.trim();
+        if (!word) { decResultBox.innerHTML = `<div class="empty-state">Введите слово</div>`; return; }
+        decResultBox.innerHTML = `<div class="empty-state">Анализ...</div>`;
+        try {
+            const data = await postData("/api/decompose", { word });
+            let html = '<div style="display: flex; flex-wrap: wrap; gap: 4px; align-items: center; justify-content: center; margin-bottom: 24px;">';
+            data.morphemes.forEach((m, idx) => {
+                const c = MORPH_COLORS[m.type] || MORPH_COLORS.ROOT;
+                html += `<div style="display: flex; flex-direction: column; align-items: center;">
+                    <span style="background: ${c.bg}; border: 2px solid ${c.border}; color: ${c.color}; padding: 10px 16px; border-radius: 12px; font-size: 1.6rem; font-weight: 700; font-family: 'Outfit', sans-serif;">${m.value}</span>
+                    <span style="font-size: 0.7rem; color: ${c.color}; margin-top: 4px; text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600;">${c.label}</span>
+                </div>`;
+                if (idx < data.morphemes.length - 1) {
+                    html += `<span style="color: var(--text-secondary); font-size: 1.2rem; padding: 0 2px;">+</span>`;
+                }
+            });
+            html += '</div>';
+            html += `<div class="status-alert success" style="text-align: center;">Источник: ${data.source === 'tikhonov' ? 'Словарь Тихонова (102K слов)' : 'Символьный fallback'}</div>`;
+            decResultBox.innerHTML = html;
+            decResultBox.classList.remove("empty");
+        } catch (err) {
+            console.error(err);
+            decResultBox.innerHTML = `<div class="empty-state" style="color: var(--danger);">Ошибка связи с сервером.</div>`;
+        }
+    });
+    decInput.addEventListener("keypress", (e) => { if (e.key === "Enter") btnDecompose.click(); });
+
+    // -----------------------------------------------------------------------
+    // Cognate Words
+    // -----------------------------------------------------------------------
+    const cogInput = document.getElementById("cog-input-word");
+    const cogResultBox = document.getElementById("cog-result-box");
+    const btnCognates = document.getElementById("btn-run-cognates");
+
+    btnCognates.addEventListener("click", async () => {
+        const word = cogInput.value.trim();
+        if (!word) { cogResultBox.innerHTML = `<div class="empty-state">Введите слово</div>`; return; }
+        cogResultBox.innerHTML = `<div class="empty-state">Поиск...</div>`;
+        try {
+            const data = await postData("/api/cognates", { word });
+            if (data.error) {
+                cogResultBox.innerHTML = `<div class="empty-state">${data.error}</div>`;
+                return;
+            }
+            let html = `<div style="text-align: center; margin-bottom: 16px;">
+                <span style="font-size: 1.2rem; color: var(--text-secondary);">Корень: </span>
+                <span style="font-size: 1.6rem; font-weight: 700; color: #f87171; font-family: 'Outfit', sans-serif;">${data.root}</span>
+                <span style="font-size: 0.85rem; color: var(--text-secondary); margin-left: 8px;">(${data.total} слов)</span>
+            </div>`;
+            html += '<div style="display: flex; flex-wrap: wrap; gap: 8px; justify-content: center;">';
+            data.cognates.forEach(w => {
+                const isInput = w.toLowerCase() === word.toLowerCase();
+                html += `<span style="padding: 6px 14px; border-radius: 20px; font-size: 0.9rem; font-weight: 500;
+                    background: ${isInput ? 'rgba(99, 102, 241, 0.2)' : 'rgba(255,255,255,0.04)'};
+                    border: 1px solid ${isInput ? 'rgba(99, 102, 241, 0.4)' : 'var(--border-color)'};
+                    color: ${isInput ? '#818cf8' : 'var(--text-primary)'};">${w}</span>`;
+            });
+            html += '</div>';
+            cogResultBox.innerHTML = html;
+            cogResultBox.classList.remove("empty");
+        } catch (err) {
+            console.error(err);
+            cogResultBox.innerHTML = `<div class="empty-state" style="color: var(--danger);">Ошибка связи с сервером.</div>`;
+        }
+    });
+    cogInput.addEventListener("keypress", (e) => { if (e.key === "Enter") btnCognates.click(); });
+
+    // -----------------------------------------------------------------------
+    // Full Paradigm Table
+    // -----------------------------------------------------------------------
+    const parInput = document.getElementById("par-input-word");
+    const parResultBox = document.getElementById("par-result-box");
+    const btnParadigm = document.getElementById("btn-run-paradigm");
+
+    const POS_NAMES_JS = {
+        NOUN: "Существительное", ADJF: "Прилагательное (полное)", ADJS: "Прил. (краткое)",
+        VERB: "Глагол (личная форма)", INFN: "Инфинитив", PRTF: "Причастие (полное)",
+        PRTS: "Причастие (краткое)", GRND: "Деепричастие", COMP: "Компаратив",
+        ADVB: "Наречие", NUMR: "Числительное", NPRO: "Местоимение"
+    };
+
+    btnParadigm.addEventListener("click", async () => {
+        const word = parInput.value.trim();
+        if (!word) { parResultBox.innerHTML = `<div class="empty-state">Введите лемму</div>`; return; }
+        parResultBox.innerHTML = `<div class="empty-state">Загрузка...</div>`;
+        try {
+            const data = await postData("/api/paradigm", { word });
+            if (data.error) {
+                parResultBox.innerHTML = `<div class="empty-state">${data.error}</div>`;
+                return;
+            }
+            let html = `<div style="text-align: center; margin-bottom: 16px;">
+                <span style="font-size: 1.2rem; font-weight: 700; color: var(--text-primary); font-family: 'Outfit';">${data.lemma}</span>
+                <span style="font-size: 0.85rem; color: var(--text-secondary); margin-left: 8px;">${data.forms.length} форм</span>
+            </div>`;
+            
+            // Group by POS
+            const groups = {};
+            data.forms.forEach(f => {
+                if (!groups[f.pos]) groups[f.pos] = [];
+                groups[f.pos].push(f);
+            });
+
+            for (const [pos, forms] of Object.entries(groups)) {
+                const posName = POS_NAMES_JS[pos] || pos;
+                html += `<div style="margin-bottom: 16px;">
+                    <div style="font-size: 0.8rem; font-weight: 600; color: var(--accent); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px; padding-left: 4px;">${posName}</div>
+                    <table style="width: 100%; border-collapse: collapse; font-size: 0.85rem;">`;
+                forms.forEach((f, i) => {
+                    const bg = i % 2 === 0 ? 'rgba(255,255,255,0.02)' : 'transparent';
+                    html += `<tr style="background: ${bg};">
+                        <td style="padding: 6px 12px; color: var(--text-secondary); font-family: monospace; font-size: 0.75rem; width: 55%;">${f.grammemes}</td>
+                        <td style="padding: 6px 12px; color: var(--text-primary); font-weight: 500;">${f.form}</td>
+                    </tr>`;
+                });
+                html += `</table></div>`;
+            }
+            parResultBox.innerHTML = html;
+            parResultBox.classList.remove("empty");
+        } catch (err) {
+            console.error(err);
+            parResultBox.innerHTML = `<div class="empty-state" style="color: var(--danger);">Ошибка связи с сервером.</div>`;
+        }
+    });
+    parInput.addEventListener("keypress", (e) => { if (e.key === "Enter") btnParadigm.click(); });
+
+    // -----------------------------------------------------------------------
+    // Suffix Statistics
+    // -----------------------------------------------------------------------
+    const sufInput = document.getElementById("suf-input");
+    const sufResultBox = document.getElementById("suf-result-box");
+    const btnSuffix = document.getElementById("btn-run-suffix");
+
+    btnSuffix.addEventListener("click", async () => {
+        const suffix = sufInput.value.trim();
+        if (!suffix) { sufResultBox.innerHTML = `<div class="empty-state">Введите суффикс</div>`; return; }
+        sufResultBox.innerHTML = `<div class="empty-state">Анализ...</div>`;
+        try {
+            const data = await postData("/api/suffix_stats", { suffix });
+            if (!data.stats || data.stats.length === 0) {
+                sufResultBox.innerHTML = `<div class="empty-state">Суффикс «${suffix}» не найден в базе</div>`;
+                return;
+            }
+            let html = `<div style="text-align: center; margin-bottom: 16px;">
+                <span style="font-size: 1.4rem; font-weight: 700; color: var(--text-primary); font-family: 'Outfit';">-${suffix}</span>
+                <span style="font-size: 0.85rem; color: var(--text-secondary); margin-left: 8px;">${data.total_count.toLocaleString()} словоформ</span>
+            </div>`;
+            
+            data.stats.forEach(s => {
+                const pct = (s.probability * 100).toFixed(1);
+                const posName = POS_NAMES_JS[s.pos] || s.pos;
+                const barWidth = Math.max(4, s.probability * 100);
+                html += `<div style="margin-bottom: 10px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                        <span style="font-size: 0.85rem; font-weight: 500; color: var(--text-primary);">${posName} ${s.grammemes ? '<span style="color: var(--text-secondary); font-size: 0.75rem; font-family: monospace;">' + s.grammemes + '</span>' : ''}</span>
+                        <span style="font-size: 0.85rem; font-weight: 600; color: var(--accent);">${pct}%</span>
+                    </div>
+                    <div style="height: 6px; background: rgba(255,255,255,0.05); border-radius: 3px; overflow: hidden;">
+                        <div style="height: 100%; width: ${barWidth}%; background: linear-gradient(90deg, var(--primary), var(--accent)); border-radius: 3px; transition: width 0.5s ease;"></div>
+                    </div>
+                    <div style="font-size: 0.7rem; color: var(--text-secondary); margin-top: 2px;">${s.count.toLocaleString()} из ${s.total.toLocaleString()}</div>
+                </div>`;
+            });
+            sufResultBox.innerHTML = html;
+            sufResultBox.classList.remove("empty");
+        } catch (err) {
+            console.error(err);
+            sufResultBox.innerHTML = `<div class="empty-state" style="color: var(--danger);">Ошибка связи с сервером.</div>`;
+        }
+    });
+    sufInput.addEventListener("keypress", (e) => { if (e.key === "Enter") btnSuffix.click(); });
+
+    // -----------------------------------------------------------------------
+    // Morpheme Catalog
+    // -----------------------------------------------------------------------
+    let catalogData = null;
+    let activeCatalogTab = 'suffixes';
+    const catalogContent = document.getElementById("catalog-content");
+    const catBtns = {
+        suffixes: document.getElementById("btn-cat-suffixes"),
+        prefixes: document.getElementById("btn-cat-prefixes"),
+        endings: document.getElementById("btn-cat-endings")
+    };
+
+    function renderCatalog(section) {
+        if (!catalogData || !catalogData[section]) {
+            catalogContent.innerHTML = `<div class="empty-state">Данные не загружены</div>`;
+            return;
+        }
+        const data = catalogData[section];
+        let html = '';
+        
+        // data is nested: POS → TYPE → items
+        for (const [posKey, posData] of Object.entries(data)) {
+            if (posKey === '_meta') continue;
+            html += `<div style="margin-bottom: 24px; grid-column: 1 / -1;">
+                <h3 style="font-family: 'Outfit'; font-size: 1.1rem; font-weight: 700; color: var(--accent); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 12px; padding-bottom: 8px; border-bottom: 1px solid var(--border-color);">${posKey}</h3>`;
+            
+            if (typeof posData === 'object' && !Array.isArray(posData)) {
+                for (const [typeName, typeData] of Object.entries(posData)) {
+                    if (typeof typeData === 'string' || typeof typeData === 'number') {
+                        // Simple key-value (like 'note:')
+                        continue;
+                    }
+                    html += `<div class="rule-card" style="margin-bottom: 8px;">
+                        <h3 style="font-size: 0.9rem;">${typeName}</h3>`;
+                    if (Array.isArray(typeData)) {
+                        html += `<div style="display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px;">`;
+                        typeData.forEach(item => {
+                            html += `<span style="padding: 4px 10px; border-radius: 8px; font-size: 0.85rem; background: rgba(99, 102, 241, 0.1); border: 1px solid rgba(99, 102, 241, 0.25); color: #818cf8; font-weight: 500;">${item}</span>`;
+                        });
+                        html += '</div>';
+                    } else if (typeof typeData === 'object') {
+                        html += '<div style="margin-top: 8px;">';
+                        for (const [formKey, formVal] of Object.entries(typeData)) {
+                            if (typeof formVal === 'string') {
+                                html += `<div style="display: flex; justify-content: space-between; padding: 3px 0; font-size: 0.8rem;">
+                                    <span style="color: var(--text-secondary); font-family: monospace;">${formKey}</span>
+                                    <span style="color: var(--text-primary); font-weight: 500;">${formVal}</span>
+                                </div>`;
+                            }
+                        }
+                        html += '</div>';
+                    }
+                    html += `</div>`;
+                }
+            }
+            html += '</div>';
+        }
+        catalogContent.innerHTML = html || '<div class="empty-state">Нет данных</div>';
+    }
+
+    async function loadCatalog() {
+        try {
+            catalogData = await getData("/api/morphemes_catalog");
+            if (catalogData.error) {
+                catalogContent.innerHTML = `<div class="empty-state">${catalogData.error}</div>`;
+                return;
+            }
+            renderCatalog(activeCatalogTab);
+        } catch (err) {
+            console.error(err);
+            catalogContent.innerHTML = `<div class="empty-state" style="color: var(--danger);">Не удалось загрузить каталог.</div>`;
+        }
+    }
+
+    Object.entries(catBtns).forEach(([key, btn]) => {
+        btn.addEventListener("click", () => {
+            Object.values(catBtns).forEach(b => b.classList.remove("active"));
+            btn.classList.add("active");
+            activeCatalogTab = key;
+            renderCatalog(key);
+        });
+    });
+
+    // -----------------------------------------------------------------------
     // Rules Catalog Loading
     // -----------------------------------------------------------------------
     async function loadRulesCatalog() {
@@ -486,7 +755,6 @@ document.addEventListener("DOMContentLoaded", () => {
     const execInputCode = document.getElementById("exec-input-code");
     const execResultBox = document.getElementById("exec-result-box");
 
-    // Pre-populate with current local computer time dynamically
     const updateLocalTimeFields = () => {
         const now = new Date();
         const hrs = String(now.getHours()).padStart(2, '0');
@@ -505,12 +773,11 @@ document.addEventListener("DOMContentLoaded", () => {
             return;
         }
 
-        // Get actual client system parameters from OS settings
         const now = new Date();
         const hrs = String(now.getHours()).padStart(2, '0');
         const mins = String(now.getMinutes()).padStart(2, '0');
         const timeVal = `${hrs}:${mins}`;
-        const dateVal = now.toISOString().split('T')[0]; // YYYY-MM-DD
+        const dateVal = now.toISOString().split('T')[0];
         const langVal = navigator.language || "ru-RU";
         const tzVal = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
 
@@ -520,15 +787,8 @@ document.addEventListener("DOMContentLoaded", () => {
         try {
             const data = await postData("/api/execute", {
                 code: code,
-                env: {
-                    current_time: timeVal,
-                    date: dateVal,
-                    language: langVal,
-                    timezone: tzVal
-                },
-                runtime: {
-                    target: activeTarget
-                }
+                env: { current_time: timeVal, date: dateVal, language: langVal, timezone: tzVal },
+                runtime: { target: activeTarget }
             });
 
             if (data.status === "unsupported") {
@@ -552,7 +812,6 @@ document.addEventListener("DOMContentLoaded", () => {
 
             if (data.status === "success") {
                 let html = "";
-                // Show status alert
                 html += `
                     <div class="status-alert success" style="margin-bottom: 24px; font-weight: 500; width: 100%; text-align: center;">
                         Инструкция выполнена успешно: ${data.action || 'действие завершено'}
@@ -574,31 +833,18 @@ document.addEventListener("DOMContentLoaded", () => {
                             ctx.clearRect(0, 0, canvas.width, canvas.height);
                             const commands = data.payload.commands || [];
                             commands.forEach(cmd => {
-                                if (cmd.op === "fillStyle") {
-                                    ctx.fillStyle = cmd.value;
-                                } else if (cmd.op === "strokeStyle") {
-                                    ctx.strokeStyle = cmd.value;
-                                } else if (cmd.op === "lineWidth") {
-                                    ctx.lineWidth = cmd.value;
-                                } else if (cmd.op === "beginPath") {
-                                    ctx.beginPath();
-                                } else if (cmd.op === "rect") {
-                                    ctx.rect(cmd.x, cmd.y, cmd.w, cmd.h);
-                                } else if (cmd.op === "fillRect") {
-                                    ctx.fillRect(cmd.x, cmd.y, cmd.w, cmd.h);
-                                } else if (cmd.op === "arc") {
-                                    ctx.arc(cmd.x, cmd.y, cmd.r, cmd.start, cmd.end);
-                                } else if (cmd.op === "fill") {
-                                    ctx.fill();
-                                } else if (cmd.op === "stroke") {
-                                    ctx.stroke();
-                                } else if (cmd.op === "moveTo") {
-                                    ctx.moveTo(cmd.x, cmd.y);
-                                } else if (cmd.op === "lineTo") {
-                                    ctx.lineTo(cmd.x, cmd.y);
-                                } else if (cmd.op === "closePath") {
-                                    ctx.closePath();
-                                }
+                                if (cmd.op === "fillStyle") ctx.fillStyle = cmd.value;
+                                else if (cmd.op === "strokeStyle") ctx.strokeStyle = cmd.value;
+                                else if (cmd.op === "lineWidth") ctx.lineWidth = cmd.value;
+                                else if (cmd.op === "beginPath") ctx.beginPath();
+                                else if (cmd.op === "rect") ctx.rect(cmd.x, cmd.y, cmd.w, cmd.h);
+                                else if (cmd.op === "fillRect") ctx.fillRect(cmd.x, cmd.y, cmd.w, cmd.h);
+                                else if (cmd.op === "arc") ctx.arc(cmd.x, cmd.y, cmd.r, cmd.start, cmd.end);
+                                else if (cmd.op === "fill") ctx.fill();
+                                else if (cmd.op === "stroke") ctx.stroke();
+                                else if (cmd.op === "moveTo") ctx.moveTo(cmd.x, cmd.y);
+                                else if (cmd.op === "lineTo") ctx.lineTo(cmd.x, cmd.y);
+                                else if (cmd.op === "closePath") ctx.closePath();
                             });
                         }
                     } else {
@@ -630,20 +876,15 @@ document.addEventListener("DOMContentLoaded", () => {
 
     function ansiToHtml(ansiStr) {
         let html = ansiStr;
-        // Escape HTML tags to prevent injections
         html = html.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-        // TrueColor background: \x1b[48;2;R;G;Bm
         const trueColorBgRegex = /\x1b\[48;2;(\d+);(\d+);(\d+)m/g;
         html = html.replace(trueColorBgRegex, (match, r, g, b) => {
             return `<span style="background-color: rgb(${r},${g},${b}); display: inline-block;">`;
         });
-        // 16-color background (fallback): \x1b[4\d+m
         const fallbackBgRegex = /\x1b\[4\d+m/g;
         html = html.replace(fallbackBgRegex, '<span style="background-color: #2ecc71; display: inline-block;">');
-        // Reset: \x1b[0m
         const resetRegex = /\x1b\[0m/g;
         html = html.replace(resetRegex, '</span>');
-        
         return html;
     }
 
@@ -656,4 +897,5 @@ document.addEventListener("DOMContentLoaded", () => {
 
     // Initial load
     loadRulesCatalog();
+    loadCatalog();
 });

@@ -1,5 +1,8 @@
 import sys
 import re
+import json
+import os
+import sqlite3
 import datetime
 from pathlib import Path
 from fastapi import FastAPI, HTTPException
@@ -68,6 +71,18 @@ class AnalyzeRequest(BaseModel):
 class FeminitiveRequest(BaseModel):
     word: str
     style: str  # 'colloquial' or 'official'
+
+class DecomposeRequest(BaseModel):
+    word: str
+
+class CognatesRequest(BaseModel):
+    word: str
+
+class ParadigmRequest(BaseModel):
+    word: str
+
+class SuffixStatsRequest(BaseModel):
+    suffix: str
 
 
 
@@ -387,6 +402,150 @@ def api_execute(req: ExecuteRequest):
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# --------------- Lazy-load globals ---------------
+
+_morph_algebra = None
+def _get_morph_algebra():
+    global _morph_algebra
+    if _morph_algebra is None:
+        from engine.hdc.morpheme_algebra import MorphemeAlgebra
+        _morph_algebra = MorphemeAlgebra()
+    return _morph_algebra
+
+_tikhonov_data = None
+def _get_tikhonov_data():
+    global _tikhonov_data
+    if _tikhonov_data is None:
+        path = os.path.join(str(PARENT_DIR), 'data', 'tikhonov_morphemes.json')
+        with open(path, 'r', encoding='utf-8') as f:
+            _tikhonov_data = json.load(f)
+    return _tikhonov_data
+
+_ALTERNATION_PAIRS = [
+    ('г', 'ж'), ('к', 'ч'), ('х', 'ш'),
+    ('д', 'ж'), ('т', 'ч'), ('т', 'щ'),
+    ('з', 'ж'), ('с', 'ш'),
+]
+
+
+@app.post("/api/decompose")
+def api_decompose(req: DecomposeRequest):
+    try:
+        algebra = _get_morph_algebra()
+        raw = algebra.decompose(req.word)
+        morphemes = [{"type": mtype, "value": mval} for mtype, mval in raw]
+        source = "fallback" if raw == [("ROOT", req.word)] else "tikhonov"
+        return {"word": req.word, "morphemes": morphemes, "source": source}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/cognates")
+def api_cognates(req: CognatesRequest):
+    try:
+        algebra = _get_morph_algebra()
+        raw = algebra.decompose(req.word)
+        root = None
+        for mtype, mval in raw:
+            if mtype == "ROOT":
+                root = mval
+                break
+        if root is None:
+            return {"word": req.word, "root": None, "cognates": [], "total": 0}
+
+        data = _get_tikhonov_data()
+        roots_index = data.get("roots_index", {})
+
+        cognates = roots_index.get(root, [])
+        if not cognates:
+            # Try consonant alternations
+            for a, b in _ALTERNATION_PAIRS:
+                if root.endswith(a):
+                    alt_root = root[:-1] + b
+                    cognates = roots_index.get(alt_root, [])
+                    if cognates:
+                        root = alt_root
+                        break
+                elif root.endswith(b):
+                    alt_root = root[:-1] + a
+                    cognates = roots_index.get(alt_root, [])
+                    if cognates:
+                        root = alt_root
+                        break
+
+        return {"word": req.word, "root": root, "cognates": cognates, "total": len(cognates)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/paradigm")
+def api_paradigm(req: ParadigmRequest):
+    try:
+        from engine.language.inflector import _cached_paradigm
+        word_lower = req.word.strip().lower()
+        rows = _cached_paradigm(word_lower)
+        if not rows:
+            return {"word": req.word, "lemma": word_lower, "pos": None, "forms": []}
+
+        forms = []
+        pos_found = None
+        for pos, grammemes, form in rows:
+            if pos_found is None:
+                pos_found = pos
+            forms.append({"pos": pos, "grammemes": grammemes, "form": form})
+
+        return {"word": req.word, "lemma": word_lower, "pos": pos_found, "forms": forms}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/suffix_stats")
+def api_suffix_stats(req: SuffixStatsRequest):
+    try:
+        db_path = os.path.join(str(PARENT_DIR), 'data', 'language', 'suffix_model.sqlite3')
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT pos, grammemes, count, total, probability "
+            "FROM suffix_stats WHERE suffix = ? ORDER BY probability DESC LIMIT 20",
+            (req.suffix,)
+        )
+        rows = cursor.fetchall()
+        conn.close()
+
+        stats = []
+        total_count = 0
+        for pos, grammemes, count, total, probability in rows:
+            stats.append({
+                "pos": pos,
+                "grammemes": grammemes,
+                "count": count,
+                "total": total,
+                "probability": probability
+            })
+            total_count += count
+
+        return {"suffix": req.suffix, "stats": stats, "total_count": total_count}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/morphemes_catalog")
+def api_morphemes_catalog():
+    try:
+        import yaml
+        morph_dir = os.path.join(str(PARENT_DIR), 'neuromorph', 'data', 'reference', 'morphemes')
+        result = {}
+        for name in ('suffixes', 'prefixes', 'endings'):
+            filepath = os.path.join(morph_dir, f'{name}.yaml')
+            with open(filepath, 'r', encoding='utf-8') as f:
+                result[name] = yaml.safe_load(f)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 # Mount static folder
 STATIC_DIR = Path(__file__).resolve().parent / "static"
