@@ -609,7 +609,7 @@ def _get_morpheme_index():
         for s in entry.get('suffixes', []):
             s_clean = s.strip().lower()
             if _is_clean_morpheme(s_clean):
-                if s_clean in wikt_suf or len(s_clean) <= 3:
+                if s_clean in wikt_suf:
                     idx.setdefault(('suffix', s_clean), []).append(word)
                 else:
                     idx.setdefault(('compound_root', s_clean), []).append(word)
