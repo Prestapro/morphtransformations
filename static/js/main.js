@@ -911,13 +911,15 @@ document.addEventListener("DOMContentLoaded", () => {
         prefix: 'приставка',
         suffix: 'суффикс',
         ending: 'окончание',
-        root: 'корень'
+        root: 'корень',
+        compound_root: '2-й корень (сложн.)'
     };
     const TYPE_COLORS = {
         prefix: { bg: 'rgba(99, 102, 241, 0.15)', border: 'rgba(99, 102, 241, 0.35)', color: '#818cf8' },
         suffix: { bg: 'rgba(16, 185, 129, 0.15)', border: 'rgba(16, 185, 129, 0.35)', color: '#34d399' },
         ending: { bg: 'rgba(251, 191, 36, 0.15)', border: 'rgba(251, 191, 36, 0.35)', color: '#fbbf24' },
-        root: { bg: 'rgba(239, 68, 68, 0.15)', border: 'rgba(239, 68, 68, 0.35)', color: '#f87171' }
+        root: { bg: 'rgba(239, 68, 68, 0.15)', border: 'rgba(239, 68, 68, 0.35)', color: '#f87171' },
+        compound_root: { bg: 'rgba(251, 146, 60, 0.15)', border: 'rgba(251, 146, 60, 0.35)', color: '#fb923c' }
     };
 
     const msrchBtns = {

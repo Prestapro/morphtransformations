@@ -560,15 +560,43 @@ def _is_clean_morpheme(s: str) -> bool:
         return False
     return bool(_CLEAN_MORPHEME_RE.match(s))
 
+_wikt_suffixes = None
+def _get_wikt_suffixes() -> set:
+    """Load Wiktionary suffix set for validation."""
+    global _wikt_suffixes
+    if _wikt_suffixes is not None:
+        return _wikt_suffixes
+    wikt_path = os.path.join(str(PARENT_DIR), 'morphtransformations', 'data', 'wiktionary_morphemes.json')
+    if not os.path.exists(wikt_path):
+        # Try alternate path
+        wikt_path = os.path.join(os.path.dirname(__file__), 'data', 'wiktionary_morphemes.json')
+    suffixes = set()
+    if os.path.exists(wikt_path):
+        with open(wikt_path, 'r', encoding='utf-8') as f:
+            wikt = json.load(f)
+        for morph in wikt.get('suffixes', {}):
+            m = morph.lstrip('-').lower().strip()
+            if m:
+                suffixes.add(m)
+    _wikt_suffixes = suffixes
+    return _wikt_suffixes
+
 _morpheme_index = None
 def _get_morpheme_index():
-    """Build inverted index: (type, morpheme) -> list of words."""
+    """Build inverted index: (type, morpheme) -> list of words.
+
+    Tikhonov stores everything after the first root as 'suffixes',
+    including second roots of compound words. We split them:
+    - 'suffix' = verified against Wiktionary (559 real suffixes)
+    - 'compound_root' = second stems of compound words
+    """
     global _morpheme_index
     if _morpheme_index is not None:
         return _morpheme_index
 
     data = _get_tikhonov_data()
     dictionary = data.get('dictionary', {})
+    wikt_suf = _get_wikt_suffixes()
 
     idx = {}  # (type, morpheme) -> [word1, word2, ...]
     for word, entry in dictionary.items():
@@ -577,11 +605,14 @@ def _get_morpheme_index():
             p_clean = p.strip().lower()
             if _is_clean_morpheme(p_clean):
                 idx.setdefault(('prefix', p_clean), []).append(word)
-        # Suffixes
+        # Suffixes — split into real suffixes vs compound roots
         for s in entry.get('suffixes', []):
             s_clean = s.strip().lower()
             if _is_clean_morpheme(s_clean):
-                idx.setdefault(('suffix', s_clean), []).append(word)
+                if s_clean in wikt_suf or len(s_clean) <= 3:
+                    idx.setdefault(('suffix', s_clean), []).append(word)
+                else:
+                    idx.setdefault(('compound_root', s_clean), []).append(word)
         # Ending
         ending = entry.get('ending', '').strip().lower()
         if _is_clean_morpheme(ending):
@@ -606,7 +637,7 @@ def api_morpheme_search(req: MorphemeSearchRequest):
             # Empty search: show all unique morphemes per type
             if mtype == 'any':
                 results = {}
-                for t in ('prefix', 'suffix', 'ending', 'root'):
+                for t in ('prefix', 'suffix', 'ending', 'root', 'compound_root'):
                     morphemes = sorted(set(m for (tp, m) in idx if tp == t))
                     if morphemes:
                         results[t] = morphemes
@@ -625,7 +656,7 @@ def api_morpheme_search(req: MorphemeSearchRequest):
         if mtype == 'any':
             # Search across all types
             results = {}
-            for t in ('prefix', 'suffix', 'ending', 'root'):
+            for t in ('prefix', 'suffix', 'ending', 'root', 'compound_root'):
                 words = idx.get((t, morpheme), [])
                 if words:
                     results[t] = words
