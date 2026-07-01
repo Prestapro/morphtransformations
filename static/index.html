@@ -288,7 +288,11 @@
                     </div>
                     <div class="result-panel">
                         <h3 id="msrch-header">Слова с этой морфемой</h3>
-                        <div id="msrch-result-box" class="result-box empty" style="max-height: calc(100vh - 340px); overflow-y: auto;">
+                        <div id="msrch-filter-row" style="display: none; margin: 8px 0; display: none;">
+                            <input type="text" id="msrch-word-filter" placeholder="Фильтр по слову / части слова..." autocomplete="off"
+                                style="width: 100%; padding: 8px 12px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--text-primary); font-size: 0.85rem;">
+                        </div>
+                        <div id="msrch-result-box" class="result-box empty" style="max-height: calc(100vh - 380px); overflow-y: auto;">
                             <div class="empty-state">Введите морфему и нажмите «Найти»</div>
                         </div>
                     </div>

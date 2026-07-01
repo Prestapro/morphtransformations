@@ -903,6 +903,8 @@ document.addEventListener("DOMContentLoaded", () => {
     const msrchResultBox = document.getElementById('msrch-result-box');
     const msrchHeader = document.getElementById('msrch-header');
     const btnMsrch = document.getElementById('btn-run-msrch');
+    const msrchFilterRow = document.getElementById('msrch-filter-row');
+    const msrchWordFilter = document.getElementById('msrch-word-filter');
     let activeMsrchType = 'any';
 
     const TYPE_LABELS = {
@@ -1062,10 +1064,10 @@ document.addEventListener("DOMContentLoaded", () => {
                     label = 'Как ' + (TYPE_LABELS[type] || type);
                 }
                 const sorted = [...words].sort((a, b) => a.localeCompare(b, 'ru'));
-                html += `<div style="margin-bottom: 20px;">
+                html += `<div data-pos-group="${type}" style="margin-bottom: 20px;">
                     <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 10px;">
                         <span style="font-size: 0.8rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: ${color};">${label}</span>
-                        <span style="font-size: 0.75rem; color: var(--text-secondary);">(${words.length}${words.length >= 1000 ? '+' : ''})</span>
+                        <span class="pos-group-count" style="font-size: 0.75rem; color: var(--text-secondary);">(${words.length}${words.length >= 1000 ? '+' : ''})</span>
                     </div>
                     <div style="columns: 3; column-gap: 16px;">`;
                 const shown = sorted.slice(0, 1000);
@@ -1092,7 +1094,7 @@ document.addEventListener("DOMContentLoaded", () => {
                     } else {
                         display = w;
                     }
-                    html += `<div style="break-inside: avoid; padding: 3px 0 3px 10px; margin-bottom: 2px; font-size: 0.85rem; color: var(--text-primary); border-left: 2px solid ${border};">${display}</div>`;
+                    html += `<div class="msrch-word-item" data-word="${w.toLowerCase()}" style="break-inside: avoid; padding: 3px 0 3px 10px; margin-bottom: 2px; font-size: 0.85rem; color: var(--text-primary); border-left: 2px solid ${border};">${display}</div>`;
                 });
                 if (words.length > 1000) {
                     html += `<div style="padding: 6px 0; font-size: 0.85rem; color: var(--text-secondary); font-style: italic;">...ещё ${words.length - 1000}</div>`;
@@ -1102,6 +1104,10 @@ document.addEventListener("DOMContentLoaded", () => {
 
             msrchResultBox.innerHTML = html;
             msrchResultBox.classList.remove('empty');
+
+            // Show word filter
+            msrchFilterRow.style.display = 'block';
+            msrchWordFilter.value = '';
 
             // Attach download handlers
             const dlAllBtn = document.getElementById('dl-all-btn');
@@ -1114,6 +1120,30 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     });
     msrchInput.addEventListener('keypress', (e) => { if (e.key === 'Enter') btnMsrch.click(); });
+
+    // Word filter — client-side instant filtering
+    msrchWordFilter.addEventListener('input', () => {
+        const q = msrchWordFilter.value.trim().toLowerCase();
+        const items = msrchResultBox.querySelectorAll('.msrch-word-item');
+        let shown = 0, hidden = 0;
+        items.forEach(el => {
+            const w = el.getAttribute('data-word') || '';
+            if (!q || w.includes(q)) {
+                el.style.display = '';
+                shown++;
+            } else {
+                el.style.display = 'none';
+                hidden++;
+            }
+        });
+        // Update POS group headers with filtered counts
+        msrchResultBox.querySelectorAll('[data-pos-group]').forEach(grp => {
+            const visibleInGroup = grp.querySelectorAll('.msrch-word-item:not([style*="display: none"])');
+            const countEl = grp.querySelector('.pos-group-count');
+            if (countEl) countEl.textContent = `(${visibleInGroup.length})`;
+            grp.style.display = visibleInGroup.length === 0 ? 'none' : '';
+        });
+    });
 
     // Initial load
     loadRulesCatalog();
