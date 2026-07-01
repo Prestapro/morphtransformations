@@ -596,6 +596,26 @@ def api_morpheme_search(req: MorphemeSearchRequest):
         morpheme = req.morpheme.strip().lower()
         mtype = req.morpheme_type.strip().lower()
 
+        if not morpheme:
+            # Empty search: show all unique morphemes per type
+            if mtype == 'any':
+                results = {}
+                for t in ('prefix', 'suffix', 'ending', 'root'):
+                    morphemes = sorted(set(m for (tp, m) in idx if tp == t))
+                    if morphemes:
+                        results[t] = morphemes
+                total = sum(len(v) for v in results.values())
+            else:
+                morphemes = sorted(set(m for (tp, m) in idx if tp == mtype))
+                results = {mtype: morphemes} if morphemes else {}
+                total = len(morphemes)
+            return {
+                "morpheme": "",
+                "type": mtype,
+                "results": results,
+                "total": total
+            }
+
         if mtype == 'any':
             # Search across all types
             results = {}
@@ -618,6 +638,453 @@ def api_morpheme_search(req: MorphemeSearchRequest):
                 "results": {mtype: words} if words else {},
                 "total": len(words)
             }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ---------------------------------------------------------------------------
+# API: Ending search via OpenCorpora paradigms (3.1M forms)
+# ---------------------------------------------------------------------------
+class EndingSearchRequest(BaseModel):
+    ending: str
+    pos: str = "any"
+    search_type: str = "ending"  # prefix, suffix, ending, any
+
+_PARADIGMS_DB = os.path.join(str(PARENT_DIR), 'data', 'language', 'ru_paradigms.sqlite3')
+
+POS_LABELS = {
+    "NOUN": "Существительное", "ADJF": "Прилагательное", "ADJS": "Кр. прилагательное",
+    "VERB": "Глагол", "INFN": "Инфинитив", "PRTF": "Причастие", "PRTS": "Кр. причастие",
+    "GRND": "Деепричастие", "ADVB": "Наречие", "COMP": "Сравнительная",
+    "NUMR": "Числительное", "NPRO": "Местоимение", "PRED": "Предикатив",
+    "PREP": "Предлог", "CONJ": "Союз", "PRCL": "Частица", "INTJ": "Междометие",
+}
+
+@app.post("/api/ending_search")
+async def api_ending_search(req: EndingSearchRequest):
+    ending = req.ending.strip().lower()
+    pos = req.pos.strip().upper()
+    stype = req.search_type.strip().lower()
+    if len(ending) > 10:
+        raise HTTPException(status_code=400, detail="ending too long")
+
+    try:
+        conn = sqlite3.connect(_PARADIGMS_DB)
+        c = conn.cursor()
+        if stype == 'prefix':
+            pattern = f'{ending}%'
+        elif stype == 'suffix' or stype == 'ending':
+            pattern = f'%{ending}'
+        else:
+            pattern = f'%{ending}%'
+        limit = 1000
+
+        if pos == "ANY" or pos == "":
+            c.execute(
+                "SELECT pos, form FROM (SELECT DISTINCT pos, form FROM paradigms WHERE form LIKE ?) ORDER BY pos, form",
+                (pattern,)
+            )
+            rows = c.fetchall()
+            results = {}
+            for p, form in rows:
+                results.setdefault(p, []).append(form)
+            total = 0
+            for p in results:
+                total += len(results[p])
+                results[p] = sorted(results[p])[:limit]
+        else:
+            c.execute(
+                "SELECT DISTINCT form FROM paradigms WHERE pos = ? AND form LIKE ? ORDER BY form",
+                (pos, pattern)
+            )
+            rows = c.fetchall()
+            forms = [r[0] for r in rows]
+            total = len(forms)
+            results = {pos: forms[:limit]}
+
+        # --- Morpheme decomposition for displayed words ---
+        all_words = []
+        for wlist in results.values():
+            all_words.extend(wlist)
+
+        decomp = {}
+        if all_words:
+            tikh = _get_tikhonov_data().get('dictionary', {})
+
+            # Batch lookup: form → lemma
+            batch_size = 900
+            form_to_lemma = {}
+            for i in range(0, len(all_words), batch_size):
+                batch = all_words[i:i+batch_size]
+                placeholders = ','.join('?' * len(batch))
+                c.execute(f'SELECT form, lemma FROM paradigms WHERE form IN ({placeholders})', batch)
+                for form, lemma in c.fetchall():
+                    if form not in form_to_lemma:
+                        form_to_lemma[form] = lemma
+                    elif lemma in tikh and form_to_lemma[form] not in tikh:
+                        form_to_lemma[form] = lemma
+                    elif lemma in tikh and form_to_lemma[form] in tikh and len(lemma) < len(form_to_lemma[form]):
+                        form_to_lemma[form] = lemma
+
+            _ENDING_PROBES = ('', 'ий', 'ый', 'ой', 'ая', 'ое', 'ать', 'ить', 'еть', 'ь', 'е', 'о', 'а')
+
+            def _find_entry(word, tikh):
+                """Find Tikhonov entry for word, trying common endings."""
+                entry = tikh.get(word)
+                if entry:
+                    return entry
+                for suf in _ENDING_PROBES:
+                    if suf and (entry := tikh.get(word + suf)):
+                        return entry
+                return None
+
+            def _decompose_entry(entry):
+                """Build morpheme parts list from a Tikhonov entry (without ending)."""
+                parts = []
+                for p in entry.get('prefixes', []):
+                    pc = p.rstrip('0123456789')
+                    if pc and ' ' not in pc:
+                        parts.append(['PREFIX', pc])
+                root = entry.get('root', '').rstrip('0123456789')
+                parts.append(['ROOT', root])
+                for s in entry.get('suffixes', []):
+                    s_clean = s.rstrip('0123456789')
+                    if s_clean and '(' not in s_clean and ' ' not in s_clean and len(s_clean) < 8:
+                        parts.append(['SUFFIX', s_clean])
+                return parts
+
+            def _try_compound(lemma, tikh, depth=0):
+                """Split compound word: hyphens, joining vowels, recursive."""
+                if depth > 3:
+                    return None
+
+                # --- 1. Hyphenated words: балочно-стоечный ---
+                if '-' in lemma:
+                    hyp_parts = lemma.split('-')
+                    all_parts = []
+                    any_found = False
+                    for idx, part in enumerate(hyp_parts):
+                        entry = _find_entry(part, tikh)
+                        if entry:
+                            all_parts.extend(_decompose_entry(entry))
+                            any_found = True
+                        else:
+                            # Try compound decomposition on this part too
+                            sub = _try_compound(part, tikh, depth + 1)
+                            if sub:
+                                all_parts.extend(sub)
+                                any_found = True
+                            else:
+                                all_parts.append(['ROOT', part])
+                        if idx < len(hyp_parts) - 1:
+                            all_parts.append(['LINK', '-'])
+                    return all_parts if any_found else None
+
+                # --- 2. Joining vowel split ---
+                best = None
+                for jv in ('о', 'е', 'и'):
+                    for i in range(3, len(lemma) - 3):
+                        if lemma[i] != jv:
+                            continue
+                        left = lemma[:i]
+                        right_after = lemma[i+1:]
+                        right_with = lemma[i:]
+
+                        if len(right_after) < 3:
+                            continue
+
+                        # Try right WITH the vowel (со-держать, по-глощать)
+                        re_full = _find_entry(right_with, tikh)
+                        if re_full:
+                            rp = _decompose_entry(re_full)
+                            rp_stem = ''.join(v for _, v in rp)
+                            if right_with.startswith(rp_stem):
+                                le = _find_entry(left, tikh)
+                                lp = _decompose_entry(le) if le else [['ROOT', left]]
+                                score = (2 if le else 1) + 2
+                                if not best or score > best[0]:
+                                    best = (score, lp + rp)
+
+                        # Try right WITHOUT the vowel (лес-о-образующий)
+                        re = _find_entry(right_after, tikh)
+                        if re:
+                            rp = _decompose_entry(re)
+                            rp_stem = ''.join(v for _, v in rp)
+                            if right_after.startswith(rp_stem):
+                                le = _find_entry(left, tikh)
+                                lp = _decompose_entry(le) if le else [['ROOT', left]]
+                                score = (2 if le else 1) + 1
+                                if not best or score > best[0]:
+                                    best = (score, lp + [['LINK', jv]] + rp)
+                        elif len(right_after) > 5:
+                            # Recurse on right part (девяносто-четырёх-летний)
+                            sub = _try_compound(right_after, tikh, depth + 1)
+                            if sub:
+                                has_real_root = any(t == 'ROOT' and len(v) >= 3 for t, v in sub)
+                                if has_real_root:
+                                    le = _find_entry(left, tikh)
+                                    lp = _decompose_entry(le) if le else [['ROOT', left]]
+                                    score = (2 if le else 1) + 1
+                                    if not best or score > best[0]:
+                                        best = (score, lp + [['LINK', jv]] + sub)
+
+                # --- 3. Known compound first-parts (авиа+парашютный) ---
+                _COMPOUND_HEADS = (
+                    'авиа', 'авто', 'аэро', 'вело', 'мото', 'фото', 'радио',
+                    'видео', 'аудио', 'гидро', 'электро', 'нефте', 'газо',
+                    'теле', 'кино', 'микро', 'макро', 'мега', 'нано', 'био',
+                    'гео', 'нейро', 'психо', 'турбо', 'стерео', 'метео',
+                )
+                for head in _COMPOUND_HEADS:
+                    if lemma.startswith(head) and len(lemma) > len(head) + 2:
+                        rest = lemma[len(head):]
+                        re = _find_entry(rest, tikh)
+                        if re:
+                            rp = _decompose_entry(re)
+                            rp_stem = ''.join(v for _, v in rp)
+                            if rest.startswith(rp_stem):  # validate
+                                score = 3
+                                if not best or score > best[0]:
+                                    best = (score, [['ROOT', head]] + rp)
+                        if not best or best[0] < 3:
+                            sub = _try_compound(rest, tikh, depth + 1)
+                            if sub:
+                                score = 2
+                                if not best or score > best[0]:
+                                    best = (score, [['ROOT', head]] + sub)
+
+                # --- 4. Morphological prefix stripping (по+нечаянный) ---
+                _MORPH_PREFIXES = (
+                    'пере', 'пред', 'анти', 'сверх', 'меж', 'между',
+                    'при', 'пре', 'без', 'бес', 'рас', 'раз',
+                    'над', 'под', 'воз', 'вос', 'обо', 'ото',
+                    'по', 'на', 'за', 'от', 'об', 'до', 'вы', 'из', 'ис', 'не',
+                    'у', 'с', 'в',
+                )
+                for pref in _MORPH_PREFIXES:
+                    if lemma.startswith(pref) and len(lemma) > len(pref) + 2:
+                        rest = lemma[len(pref):]
+                        re = _find_entry(rest, tikh)
+                        if re:
+                            rp = _decompose_entry(re)
+                            rp_stem = ''.join(v for _, v in rp)
+                            if rest.startswith(rp_stem):  # validate
+                                score = 2
+                                if not best or score > best[0]:
+                                    best = (score, [['PREFIX', pref]] + rp)
+                        else:
+                            # Try double prefix: из+маяться → ис+паясничать
+                            sub = _try_compound(rest, tikh, depth + 1)
+                            if sub:
+                                score = 1
+                                if not best or score > best[0]:
+                                    best = (score, [['PREFIX', pref]] + sub)
+
+                return best[1] if best else None
+
+            # --- Strategy 5: Suffix-based fallback for words NOT in Tikhonov ---
+            _KNOWN_SUFFIXES = (
+                # Longest first for greedy matching
+                'тельн', 'ическ', 'ческ', 'ивист', 'ирова', 'изова',
+                'ирующ', 'изующ',
+                'альн', 'ельн', 'ильн', 'ульн', 'овочн', 'ёвочн',
+                'ическ', 'оват', 'еват',
+                'онн', 'енн', 'анн', 'инн',
+                'ист', 'лив', 'чив',
+                'ова', 'ева',
+                'ующ', 'ющ', 'ущ', 'ащ', 'ящ',  # active participle
+                'ск', 'ов', 'ев', 'ан', 'ян', 'ен',
+                'ем', 'им',  # passive participle
+                'нн',  # past passive participle
+                'н', 'к', 'л',
+            )
+            _KNOWN_ENDINGS = ('ая', 'ой', 'ый', 'ий', 'ое', 'ые', 'ых', 'ом', 'ым',
+                              'ей', 'ых', 'ую', 'юю', 'его', 'ому', 'ыми', 'ими',
+                              'ат', 'ят', 'ут', 'ют', 'ет', 'ёт', 'ит',
+                              'ал', 'ял', 'ил', 'ел', 'ол', 'ул',
+                              'ала', 'яла', 'ила', 'ела', 'ула',
+                              'али', 'яли', 'или', 'ели', 'ули',
+                              'ало', 'яло', 'ило', 'ело', 'уло',
+                              'ю', 'у', 'а', 'о', 'и', 'е', 'ы', '')
+            _FALLBACK_PREFIXES = (
+                'пере', 'пред', 'анти', 'сверх', 'меж', 'между',
+                'при', 'пре', 'без', 'бес', 'рас', 'раз',
+                'над', 'под', 'воз', 'вос', 'обо', 'ото',
+                'про', 'пре',
+                'по', 'на', 'за', 'от', 'об', 'до', 'вы', 'из', 'ис', 'не',
+                'у', 'с', 'в',
+            )
+
+            def _suffix_fallback(word):
+                """Decompose by suffix pattern recognition (no dictionary needed)."""
+                w = word.lower()
+                parts = []
+
+                # Strip prefix(es)
+                for pref in _FALLBACK_PREFIXES:
+                    if w.startswith(pref) and len(w) > len(pref) + 3:
+                        parts.append(['PREFIX', pref])
+                        w = w[len(pref):]
+                        break  # one prefix max for fallback
+
+                # Strip ending
+                end_found = ''
+                for end in _KNOWN_ENDINGS:
+                    if end and w.endswith(end) and len(w) > len(end) + 2:
+                        end_found = end
+                        w = w[:-len(end)]
+                        break
+
+                # Find suffix
+                suf_found = ''
+                for suf in _KNOWN_SUFFIXES:
+                    if w.endswith(suf) and len(w) > len(suf) + 1:
+                        suf_found = suf
+                        w = w[:-len(suf)]
+                        break
+
+                if not w:
+                    return None
+
+                parts.append(['ROOT', w])
+                if suf_found:
+                    parts.append(['SUFFIX', suf_found])
+                if end_found:
+                    parts.append(['ENDING', end_found])
+
+                return parts
+
+            for word in all_words:
+                lemma = form_to_lemma.get(word)
+                if not lemma:
+                    continue
+                entry = tikh.get(lemma)
+                if entry:
+                    parts = _decompose_entry(entry)
+                    # Validate: stem must prefix lemma (catches corrupt entries)
+                    stem_check = ''.join(v for _, v in parts)
+                    if not lemma.startswith(stem_check):
+                        parts = _try_compound(lemma, tikh)
+                else:
+                    parts = _try_compound(lemma, tikh)
+                if not parts:
+                    # Fallback: suffix-based decomposition
+                    fb = _suffix_fallback(lemma)
+                    if fb:
+                        stem = ''.join(v for t, v in fb if v and t != 'ENDING')
+                        if word.startswith(stem):
+                            end_part = word[len(stem):]
+                            fb_no_end = [p for p in fb if p[0] != 'ENDING']
+                            if end_part:
+                                fb_no_end.append(['ENDING', end_part])
+                            decomp[word] = fb_no_end
+                        else:
+                            # Try verb trim on fallback too
+                            matched = False
+                            for vs in ('ться', 'ть', 'ся', 'сь'):
+                                if stem.endswith(vs):
+                                    tr = stem[:-len(vs)]
+                                    if tr and word.startswith(tr):
+                                        fb2 = [p for p in fb if p[0] != 'ENDING']
+                                        fb2_trimmed = []
+                                        rem = tr
+                                        for t, v in fb2:
+                                            if rem.startswith(v):
+                                                fb2_trimmed.append([t, v])
+                                                rem = rem[len(v):]
+                                            elif rem:
+                                                fb2_trimmed.append([t, rem])
+                                                rem = ''
+                                        ep = word[len(tr):]
+                                        if ep:
+                                            fb2_trimmed.append(['ENDING', ep])
+                                        decomp[word] = fb2_trimmed
+                                        matched = True
+                                        break
+                            if not matched:
+                                # Try fallback on the WORD form itself
+                                fb_w = _suffix_fallback(word)
+                                if fb_w:
+                                    stem_w = ''.join(v for t, v in fb_w if v and t != 'ENDING')
+                                    if word.startswith(stem_w):
+                                        end_w = word[len(stem_w):]
+                                        fb_w_no_end = [p for p in fb_w if p[0] != 'ENDING']
+                                        if end_w:
+                                            fb_w_no_end.append(['ENDING', end_w])
+                                        decomp[word] = fb_w_no_end
+                    continue
+                stem = ''.join(v for _, v in parts)
+                if word.startswith(stem):
+                    end_part = word[len(stem):]
+                    if end_part:
+                        parts.append(['ENDING', end_part])
+                    decomp[word] = parts
+                else:
+                    # Try trimming verb suffixes from stem (ться, ть, ся, сь)
+                    for verb_suf in ('ться', 'ть', 'ся', 'сь'):
+                        if stem.endswith(verb_suf):
+                            trimmed = stem[:-len(verb_suf)]
+                            if trimmed and word.startswith(trimmed):
+                                trimmed_parts = []
+                                remaining = trimmed
+                                for t, v in parts:
+                                    if remaining.startswith(v):
+                                        trimmed_parts.append([t, v])
+                                        remaining = remaining[len(v):]
+                                    elif remaining:
+                                        take = remaining
+                                        trimmed_parts.append([t, take])
+                                        remaining = ''
+                                end_part = word[len(trimmed):]
+                                if end_part:
+                                    trimmed_parts.append(['ENDING', end_part])
+                                decomp[word] = trimmed_parts
+                                break
+                    else:
+                        # Try short-form adjective: stem ends in нн but word has single н
+                        if stem.endswith('нн') and word.startswith(stem[:-1]):
+                            trimmed = stem[:-1]
+                            parts_adj = []
+                            rem = trimmed
+                            for t, v in parts:
+                                if rem.startswith(v):
+                                    parts_adj.append([t, v])
+                                    rem = rem[len(v):]
+                                elif rem:
+                                    parts_adj.append([t, rem])
+                                    rem = ''
+                            ep = word[len(trimmed):]
+                            if ep:
+                                parts_adj.append(['ENDING', ep])
+                            decomp[word] = parts_adj
+                        elif word not in decomp:
+                            # Last resort: suffix fallback on word form itself
+                            fb_w = _suffix_fallback(word)
+                            if fb_w:
+                                stem_w = ''.join(v for t, v in fb_w if v and t != 'ENDING')
+                                if word.startswith(stem_w):
+                                    end_w = word[len(stem_w):]
+                                    fb_w_no_end = [p for p in fb_w if p[0] != 'ENDING']
+                                    if end_w:
+                                        fb_w_no_end.append(['ENDING', end_w])
+                                    decomp[word] = fb_w_no_end
+
+        conn.close()
+        decomp_count = len(decomp)
+        uncovered = [w for w in all_words if w not in decomp]
+        return {
+            "ending": ending,
+            "pos": pos if pos != "ANY" else "any",
+            "results": results,
+            "total": total,
+            "pos_labels": POS_LABELS,
+            "decomp": decomp,
+            "coverage": {
+                "decomposed": decomp_count,
+                "total_shown": len(all_words),
+                "pct": round(100 * decomp_count / len(all_words), 1) if all_words else 0
+            },
+            "uncovered": uncovered
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
