@@ -9,7 +9,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="css/styles.css?v=4">
+    <link rel="stylesheet" href="css/styles.css?v=12">
 </head>
 <body>
     <div class="background-glow"></div>
@@ -249,7 +249,7 @@
                         <p class="section-desc">Введите приставку, суффикс, окончание или корень — увидите все слова из словаря Тихонова (100K), которые содержат эту морфему.</p>
                         <div class="input-group">
                             <label for="msrch-input">Морфема</label>
-                            <input type="text" id="msrch-input" placeholder="Например: пере, ник, ость, ий..." autocomplete="off">
+                            <input type="text" id="msrch-input" placeholder="пере, ник, ость, ий..." autocomplete="off">
                         </div>
                         <div class="input-group">
                             <label>Тип морфемы</label>
@@ -261,11 +261,34 @@
                                 <button class="style-btn" id="btn-msrch-root">Корень</button>
                             </div>
                         </div>
+                        <div class="input-group">
+                            <label>Источник</label>
+                            <div style="display: flex; gap: 6px;">
+                                <button class="style-btn active" id="btn-src-tikhonov">Тихонов (100K)</button>
+                                <button class="style-btn" id="btn-src-opencorpora" style="background: rgba(168, 85, 247, 0.15); border: 1px solid rgba(168, 85, 247, 0.35); color: #c084fc;">OpenCorpora (3.1M форм)</button>
+                            </div>
+                        </div>
+                        <div class="input-group" id="pos-filter-group" style="display: none;">
+                            <label>Часть речи</label>
+                            <div style="display: flex; flex-wrap: wrap; gap: 6px;">
+                                <button class="style-btn active" data-pos="any">Все</button>
+                                <button class="style-btn" data-pos="NOUN">Сущ.</button>
+                                <button class="style-btn" data-pos="ADJF">Прил.</button>
+                                <button class="style-btn" data-pos="VERB">Глагол</button>
+                                <button class="style-btn" data-pos="INFN">Инфин.</button>
+                                <button class="style-btn" data-pos="PRTF">Прич.</button>
+                                <button class="style-btn" data-pos="GRND">Деепр.</button>
+                                <button class="style-btn" data-pos="ADVB">Нареч.</button>
+                                <button class="style-btn" data-pos="ADJS">Кр.прил.</button>
+                                <button class="style-btn" data-pos="PRTS">Кр.прич.</button>
+                                <button class="style-btn" data-pos="COMP">Сравн.</button>
+                            </div>
+                        </div>
                         <button class="primary-btn" id="btn-run-msrch">Найти слова</button>
                     </div>
                     <div class="result-panel">
-                        <h3>Слова с этой морфемой</h3>
-                        <div id="msrch-result-box" class="result-box empty" style="max-height: 500px; overflow-y: auto;">
+                        <h3 id="msrch-header">Слова с этой морфемой</h3>
+                        <div id="msrch-result-box" class="result-box empty" style="max-height: calc(100vh - 340px); overflow-y: auto;">
                             <div class="empty-state">Введите морфему и нажмите «Найти»</div>
                         </div>
                     </div>
@@ -339,6 +362,6 @@
     </div>
 
     <!-- Scripts -->
-    <script src="js/main.js?v=4"></script>
+    <script src="js/main.js?v=12"></script>
 </body>
 </html>

@@ -954,6 +954,32 @@ async def api_ending_search(req: EndingSearchRequest):
                 return parts
 
             for word in all_words:
+                # --- Numeric forms: 1950-ые, 100-летний, 2-й ---
+                if any(ch.isdigit() for ch in word):
+                    if '-' in word:
+                        num_part, alpha_part = word.split('-', 1)
+                        if num_part and alpha_part:
+                            # Try decomposing the alpha part
+                            alpha_lemma = form_to_lemma.get(alpha_part)
+                            alpha_entry = tikh.get(alpha_lemma) if alpha_lemma else None
+                            if alpha_entry:
+                                ap = _decompose_entry(alpha_entry)
+                                ap_stem = ''.join(v for _, v in ap)
+                                if alpha_part.startswith(ap_stem):
+                                    end_p = alpha_part[len(ap_stem):]
+                                    if end_p:
+                                        ap.append(['ENDING', end_p])
+                                    decomp[word] = [['ROOT', num_part], ['LINK', '-']] + ap
+                                else:
+                                    decomp[word] = [['ROOT', num_part], ['LINK', '-'], ['ENDING', alpha_part]]
+                            else:
+                                # Simple: number + ending
+                                decomp[word] = [['ROOT', num_part], ['LINK', '-'], ['ENDING', alpha_part]]
+                    else:
+                        # Pure numeric or mixed: treat entire word as ROOT
+                        decomp[word] = [['ROOT', word]]
+                    continue
+
                 lemma = form_to_lemma.get(word)
                 if not lemma:
                     continue
@@ -1069,8 +1095,9 @@ async def api_ending_search(req: EndingSearchRequest):
                                     decomp[word] = fb_w_no_end
 
         conn.close()
+        unique_words = list(dict.fromkeys(all_words))  # deduplicate preserving order
         decomp_count = len(decomp)
-        uncovered = [w for w in all_words if w not in decomp]
+        uncovered = [w for w in unique_words if w not in decomp]
         return {
             "ending": ending,
             "pos": pos if pos != "ANY" else "any",
@@ -1080,8 +1107,8 @@ async def api_ending_search(req: EndingSearchRequest):
             "decomp": decomp,
             "coverage": {
                 "decomposed": decomp_count,
-                "total_shown": len(all_words),
-                "pct": round(100 * decomp_count / len(all_words), 1) if all_words else 0
+                "total_shown": len(unique_words),
+                "pct": round(100 * decomp_count / len(unique_words), 1) if unique_words else 0
             },
             "uncovered": uncovered
         }

@@ -901,6 +901,7 @@ document.addEventListener("DOMContentLoaded", () => {
     // -----------------------------------------------------------------------
     const msrchInput = document.getElementById('msrch-input');
     const msrchResultBox = document.getElementById('msrch-result-box');
+    const msrchHeader = document.getElementById('msrch-header');
     const btnMsrch = document.getElementById('btn-run-msrch');
     let activeMsrchType = 'any';
 
@@ -925,6 +926,53 @@ document.addEventListener("DOMContentLoaded", () => {
         root: document.getElementById('btn-msrch-root')
     };
 
+    // Source toggle (independent from type)
+    const btnSrcTikhonov = document.getElementById('btn-src-tikhonov');
+    const btnSrcOpenCorpora = document.getElementById('btn-src-opencorpora');
+    let useOpenCorpora = false;
+
+    const posFilterGroup = document.getElementById('pos-filter-group');
+    let activeEndPos = 'any';
+
+    btnSrcTikhonov.addEventListener('click', () => {
+        btnSrcTikhonov.classList.add('active');
+        btnSrcOpenCorpora.classList.remove('active');
+        useOpenCorpora = false;
+        posFilterGroup.style.display = 'none';
+    });
+    btnSrcOpenCorpora.addEventListener('click', () => {
+        btnSrcOpenCorpora.classList.add('active');
+        btnSrcTikhonov.classList.remove('active');
+        useOpenCorpora = true;
+        posFilterGroup.style.display = 'block';
+    });
+
+    // POS filter buttons
+    const endPosBtns = document.querySelectorAll('#pos-filter-group [data-pos]');
+    endPosBtns.forEach(btn => {
+        btn.addEventListener('click', () => {
+            endPosBtns.forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            activeEndPos = btn.dataset.pos;
+        });
+    });
+
+    const POS_COLORS = {
+        NOUN: { border: '#6366f1', color: '#818cf8' },
+        ADJF: { border: '#10b981', color: '#34d399' },
+        VERB: { border: '#f43f5e', color: '#fb7185' },
+        INFN: { border: '#f97316', color: '#fb923c' },
+        PRTF: { border: '#a855f7', color: '#c084fc' },
+        GRND: { border: '#14b8a6', color: '#2dd4bf' },
+        ADVB: { border: '#eab308', color: '#facc15' },
+        ADJS: { border: '#22d3ee', color: '#67e8f9' },
+        PRTS: { border: '#ec4899', color: '#f472b6' },
+        COMP: { border: '#84cc16', color: '#a3e635' },
+        NUMR: { border: '#8b5cf6', color: '#a78bfa' },
+        NPRO: { border: '#64748b', color: '#94a3b8' },
+    };
+
+    // Type toggle (prefix/suffix/ending/root)
     Object.entries(msrchBtns).forEach(([key, btn]) => {
         btn.addEventListener('click', () => {
             Object.values(msrchBtns).forEach(b => b.classList.remove('active'));
@@ -935,41 +983,131 @@ document.addEventListener("DOMContentLoaded", () => {
 
     btnMsrch.addEventListener('click', async () => {
         const morpheme = msrchInput.value.trim();
-        if (!morpheme) { msrchResultBox.innerHTML = '<div class="empty-state">Введите морфему</div>'; return; }
         msrchResultBox.innerHTML = '<div class="empty-state">Поиск...</div>';
+
+        const isOpenCorpora = useOpenCorpora;
+
         try {
-            const data = await postData('/api/morpheme_search', { morpheme, morpheme_type: activeMsrchType });
+            let data;
+            if (isOpenCorpora) {
+                const stMap = { any: 'any', prefix: 'prefix', suffix: 'suffix', ending: 'ending', root: 'any' };
+                const searchType = stMap[activeMsrchType] || 'ending';
+                data = await postData('/api/ending_search', { ending: morpheme, pos: activeEndPos, search_type: searchType });
+            } else {
+                data = await postData('/api/morpheme_search', { morpheme, morpheme_type: activeMsrchType });
+            }
+
             if (data.total === 0) {
-                msrchResultBox.innerHTML = `<div class="empty-state">Морфема «${morpheme}» не найдена в словаре</div>`;
+                msrchResultBox.innerHTML = `<div class="empty-state">«${morpheme}» не найдено</div>`;
+                msrchHeader.textContent = 'Ничего не найдено';
                 return;
             }
 
-            let html = `<div style="text-align: center; margin-bottom: 16px;">
-                <span style="font-size: 1.4rem; font-weight: 700; color: var(--text-primary); font-family: 'Outfit';">${morpheme}</span>
-                <span style="font-size: 0.85rem; color: var(--text-secondary); margin-left: 8px;">${data.total} слов</span>
-            </div>`;
+            const sourceLabel = isOpenCorpora ? 'OpenCorpora' : 'Тихонов';
+            let modeLabel;
+            if (isOpenCorpora) {
+                const modeMap = { prefix: 'Начинаются на', suffix: 'Оканчиваются на', ending: 'Оканчиваются на', any: 'Содержат' };
+                const stMap2 = { any: 'any', prefix: 'prefix', suffix: 'suffix', ending: 'ending', root: 'any' };
+                modeLabel = modeMap[stMap2[activeMsrchType] || 'ending'] || 'Содержат';
+            } else {
+                modeLabel = 'Слова с';
+            }
+
+            // Coverage stats
+            const cov = data.coverage || {};
+            const covPct = cov.pct || 0;
+            const covDecomp = cov.decomposed || 0;
+            const covTotal = cov.total_shown || 0;
+            const covColor = covPct >= 80 ? '#10b981' : covPct >= 50 ? '#eab308' : '#f43f5e';
+            const covText = covTotal > 0 ? ` · Покрытие: ${covDecomp}/${covTotal} (${covPct}%)` : '';
+            const shownNote = (covTotal > 0 && covTotal < data.total) ? ` · <span style="color:#94a3b8;font-size:0.8em">показано ${covTotal.toLocaleString('ru-RU')} из ${data.total.toLocaleString('ru-RU')}</span>` : '';
+
+            msrchHeader.innerHTML = `${modeLabel} «${morpheme || '*'}» — ${data.total.toLocaleString('ru-RU')} (${sourceLabel})<span style="color:${covColor};font-size:0.85em">${covText}</span>${shownNote}`;
+
+            // Download buttons
+            const allWords = [];
+            for (const words of Object.values(data.results)) { allWords.push(...words); }
+            const uncovered = data.uncovered || [];
+
+            const _downloadFile = (filename, lines) => {
+                const blob = new Blob([lines.join('\n')], {type: 'text/plain;charset=utf-8'});
+                const a = document.createElement('a');
+                a.href = URL.createObjectURL(blob);
+                a.download = filename;
+                a.click();
+                URL.revokeObjectURL(a.href);
+            };
+
+            let dlHtml = `<div style="margin:8px 0;display:flex;gap:6px;align-items:center;flex-wrap:wrap">` +
+                `<button id="dl-all-btn" style="background:rgba(99,102,241,0.7);border:none;color:#fff;padding:4px 12px;border-radius:6px;cursor:pointer;font-size:0.8em">⬇ Все (${allWords.length})</button>`;
+            if (uncovered.length > 0) {
+                dlHtml += `<button id="dl-uncov-btn" style="background:rgba(244,63,94,0.7);border:none;color:#fff;padding:4px 12px;border-radius:6px;cursor:pointer;font-size:0.8em">⬇ Непокрытые (${uncovered.length})</button>`;
+            }
+            dlHtml += `</div>`;
+
+            const posLabels = data.pos_labels || {};
+            let html = dlHtml;
 
             for (const [type, words] of Object.entries(data.results)) {
-                const tc = TYPE_COLORS[type] || TYPE_COLORS.root;
-                const label = TYPE_LABELS[type] || type;
+                let color, border, label;
+                if (isOpenCorpora) {
+                    const pc = POS_COLORS[type] || { border: '#64748b', color: '#94a3b8' };
+                    color = pc.color;
+                    border = pc.border;
+                    label = posLabels[type] || type;
+                } else {
+                    const tc = TYPE_COLORS[type] || TYPE_COLORS.root;
+                    color = tc.color;
+                    border = tc.border;
+                    label = 'Как ' + (TYPE_LABELS[type] || type);
+                }
+                const sorted = [...words].sort((a, b) => a.localeCompare(b, 'ru'));
                 html += `<div style="margin-bottom: 20px;">
                     <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 10px;">
-                        <span style="font-size: 0.8rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: ${tc.color};">Как ${label}</span>
-                        <span style="font-size: 0.75rem; color: var(--text-secondary);">(${words.length})</span>
+                        <span style="font-size: 0.8rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: ${color};">${label}</span>
+                        <span style="font-size: 0.75rem; color: var(--text-secondary);">(${words.length}${words.length >= 1000 ? '+' : ''})</span>
                     </div>
-                    <div style="display: flex; flex-wrap: wrap; gap: 6px;">`;
-                const shown = words.slice(0, 200);
+                    <div style="columns: 3; column-gap: 16px;">`;
+                const shown = sorted.slice(0, 1000);
+                const mLower = morpheme.toLowerCase();
+                const decomp = data.decomp || {};
+                const MORPH_COLORS = {
+                    PREFIX: '#818cf8',
+                    ROOT: '#f87171',
+                    SUFFIX: '#34d399',
+                    ENDING: '#fbbf24',
+                    LINK: '#f472b6'
+                };
                 shown.forEach(w => {
-                    html += `<span style="padding: 4px 12px; border-radius: 16px; font-size: 0.85rem; font-weight: 500; background: ${tc.bg}; border: 1px solid ${tc.border}; color: var(--text-primary); cursor: default; transition: var(--transition);">${w}</span>`;
+                    let display;
+                    const parts = decomp[w];
+                    if (parts && parts.length > 0) {
+                        display = parts.map(([t, v]) => {
+                            const mc = MORPH_COLORS[t] || 'var(--text-primary)';
+                            return `<span style="color: ${mc}; font-weight: ${t === 'ROOT' ? '700' : '500'};" title="${t}">${v}</span>`;
+                        }).join('');
+                    } else if (w.toLowerCase().endsWith(mLower)) {
+                        const stem = w.slice(0, w.length - mLower.length);
+                        display = `${stem}<span style="color: ${color}; font-weight: 600;">${w.slice(w.length - mLower.length)}</span>`;
+                    } else {
+                        display = w;
+                    }
+                    html += `<div style="break-inside: avoid; padding: 3px 0 3px 10px; margin-bottom: 2px; font-size: 0.85rem; color: var(--text-primary); border-left: 2px solid ${border};">${display}</div>`;
                 });
-                if (words.length > 200) {
-                    html += `<span style="padding: 4px 12px; border-radius: 16px; font-size: 0.85rem; color: var(--text-secondary);">...+${words.length - 200} ещё</span>`;
+                if (words.length > 1000) {
+                    html += `<div style="padding: 6px 0; font-size: 0.85rem; color: var(--text-secondary); font-style: italic;">...ещё ${words.length - 1000}</div>`;
                 }
                 html += `</div></div>`;
             }
 
             msrchResultBox.innerHTML = html;
             msrchResultBox.classList.remove('empty');
+
+            // Attach download handlers
+            const dlAllBtn = document.getElementById('dl-all-btn');
+            if (dlAllBtn) dlAllBtn.addEventListener('click', () => _downloadFile(`all_${morpheme||'words'}.txt`, allWords));
+            const dlUncovBtn = document.getElementById('dl-uncov-btn');
+            if (dlUncovBtn) dlUncovBtn.addEventListener('click', () => _downloadFile(`uncovered_${morpheme||'words'}.txt`, uncovered));
         } catch (err) {
             console.error(err);
             msrchResultBox.innerHTML = '<div class="empty-state" style="color: var(--danger);">Ошибка связи с сервером.</div>';
