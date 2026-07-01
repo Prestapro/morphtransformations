@@ -551,7 +551,14 @@ def api_morphemes_catalog():
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# --------------- Morpheme reverse index ---------------
+import re as _re
+_CLEAN_MORPHEME_RE = _re.compile(r'^[а-яёА-ЯЁ\-]+$')
+
+def _is_clean_morpheme(s: str) -> bool:
+    """Check if a morpheme string is a real morpheme (not a grammatical note)."""
+    if not s or len(s) > 20:
+        return False
+    return bool(_CLEAN_MORPHEME_RE.match(s))
 
 _morpheme_index = None
 def _get_morpheme_index():
@@ -568,21 +575,20 @@ def _get_morpheme_index():
         # Prefixes
         for p in entry.get('prefixes', []):
             p_clean = p.strip().lower()
-            if p_clean:
+            if _is_clean_morpheme(p_clean):
                 idx.setdefault(('prefix', p_clean), []).append(word)
         # Suffixes
         for s in entry.get('suffixes', []):
             s_clean = s.strip().lower()
-            # Skip dirty entries with annotations
-            if s_clean and '(' not in s_clean and len(s_clean) < 15:
+            if _is_clean_morpheme(s_clean):
                 idx.setdefault(('suffix', s_clean), []).append(word)
         # Ending
         ending = entry.get('ending', '').strip().lower()
-        if ending:
+        if _is_clean_morpheme(ending):
             idx.setdefault(('ending', ending), []).append(word)
         # Root
         root = entry.get('root', '').strip().lower()
-        if root:
+        if _is_clean_morpheme(root):
             idx.setdefault(('root', root), []).append(word)
 
     _morpheme_index = idx
