@@ -1787,6 +1787,9 @@ def api_ending_search(req: EndingSearchRequest):
         unique_words = list(dict.fromkeys(all_words_page))  # deduplicate preserving order
         decomp_count = len(decomp)
         uncovered = [w for w in unique_words if w not in decomp]
+        # For root search: compute uncovered from decomp results (all words are on page)
+        if stype == 'root' and uncovered_only_total == -1:
+            uncovered_only_total = len(uncovered)
         return {
             "ending": ending,
             "pos": pos if pos != "ANY" else "any",
