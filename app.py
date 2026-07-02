@@ -875,16 +875,31 @@ def api_ending_export(req: EndingSearchRequest):
         all_lemmas = [r[0] for r in all_rows]  # r[0] = lemma
         unique_words = list(dict.fromkeys(all_lemmas))
         
-        # Decompose only to find uncovered
-        from engine.hdc.morpheme_algebra import MorphemeAlgebra
-        _ma = MorphemeAlgebra()
+        stype = req.search_type.lower().strip()
+        ending = req.ending.lower().strip()
         
         results = []
         if getattr(req, 'uncovered_only', False):
-            for w in unique_words:
-                decomp = _ma.decompose(w)
-                if len(decomp) == 1 and decomp[0][0] == "ROOT":
-                    results.append(w)
+            if stype == 'root':
+                # For root search: uncovered = words containing substring
+                # but NOT confirmed as having this root in word_morphemes
+                c.execute("""
+                    SELECT DISTINCT p.lemma FROM paradigms p
+                    WHERE p.form LIKE ?
+                    AND p.lemma NOT IN (
+                        SELECT DISTINCT lemma FROM word_morphemes
+                        WHERE mtype='ROOT' AND morpheme=? AND source != 'unknown'
+                    )
+                    ORDER BY p.lemma
+                """, (f'%{ending}%', ending))
+                results = [r[0] for r in c.fetchall()]
+            else:
+                from engine.hdc.morpheme_algebra import MorphemeAlgebra
+                _ma = MorphemeAlgebra()
+                for w in unique_words:
+                    decomp = _ma.decompose(w)
+                    if len(decomp) == 1 and decomp[0][0] == "ROOT":
+                        results.append(w)
         else:
             results = unique_words
             
@@ -1299,9 +1314,20 @@ def api_ending_search(req: EndingSearchRequest):
                 all_words_page.append(w[:-4] if w.endswith('(ся)') else w)
 
         # Calculate global uncovered count if total is not too huge
-        # Skip for root searches — LIKE '%пуск%' matches substrings, not root morphemes
         uncovered_only_total = -1
-        if stype != 'root' and total < 20000:
+        if stype == 'root':
+            # For root search: uncovered = words in paradigms containing this substring
+            # but NOT confirmed as having ROOT=ending in word_morphemes
+            c.execute("""
+                SELECT COUNT(DISTINCT p.lemma) FROM paradigms p
+                WHERE p.form LIKE ?
+                AND p.lemma NOT IN (
+                    SELECT DISTINCT lemma FROM word_morphemes
+                    WHERE mtype='ROOT' AND morpheme=? AND source != 'unknown'
+                )
+            """, (f'%{ending}%', ending))
+            uncovered_only_total = c.fetchone()[0]
+        elif total < 20000:
             # We need to fetch ALL distinct forms for this query to check decomposition
             c.execute(
                 f"SELECT DISTINCT form FROM paradigms WHERE form LIKE ?{extra_where}",
@@ -1787,9 +1813,6 @@ def api_ending_search(req: EndingSearchRequest):
         unique_words = list(dict.fromkeys(all_words_page))  # deduplicate preserving order
         decomp_count = len(decomp)
         uncovered = [w for w in unique_words if w not in decomp]
-        # For root search: compute uncovered from decomp results (all words are on page)
-        if stype == 'root' and uncovered_only_total == -1:
-            uncovered_only_total = len(uncovered)
         return {
             "ending": ending,
             "pos": pos if pos != "ANY" else "any",
