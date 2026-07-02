@@ -827,16 +827,30 @@ def _fetch_ending_words(req: EndingSearchRequest, c):
     stype = req.search_type.lower().strip()
     word_filter = getattr(req, 'word_filter', '').lower().strip()
 
+    if stype == 'root':
+        # For root search: use word_morphemes (same as main search)
+        query = """SELECT DISTINCT lemma FROM word_morphemes
+            WHERE mtype='ROOT' AND morpheme=? AND source != 'unknown'
+            AND lemma IN (SELECT DISTINCT lemma FROM paradigms)"""
+        params = [ending]
+        if pos != 'ANY':
+            query += " AND pos = ?"
+            params.append(pos)
+        if word_filter:
+            query += " AND lemma LIKE ?"
+            params.append(f'%{word_filter}%')
+        query += " ORDER BY lemma"
+        c.execute(query, params)
+        return [(r[0],) for r in c.fetchall()]
+
     if stype == 'prefix':
         pattern = f'{ending}%'
     elif stype == 'suffix' or stype == 'ending':
         pattern = f'%{ending}'
-    elif stype == 'root' or stype == 'any':
-        pattern = f'%{ending}%'
     else:
-        pattern = f'%{ending}'
+        pattern = f'%{ending}%'
 
-    query = "SELECT lemma, word FROM paradigms WHERE word LIKE ?"
+    query = "SELECT DISTINCT lemma FROM paradigms WHERE form LIKE ?"
     params = [pattern]
 
     if pos != 'ANY':
@@ -844,9 +858,10 @@ def _fetch_ending_words(req: EndingSearchRequest, c):
         params.append(pos)
     
     if word_filter:
-        query += " AND word LIKE ?"
+        query += " AND lemma LIKE ?"
         params.append(f'%{word_filter}%')
 
+    query += " ORDER BY lemma"
     c.execute(query, params)
     return c.fetchall()
 
