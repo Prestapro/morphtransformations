@@ -9,7 +9,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="css/styles.css?v=12">
+    <link rel="stylesheet" href="css/styles.css?v=16">
 </head>
 <body>
     <div class="background-glow"></div>
@@ -22,14 +22,14 @@
 
         <!-- Navigation Tabs -->
         <nav class="tabs" role="tablist">
-            <button class="tab-btn active" id="tab-feminitive" role="tab" aria-selected="true">Феминизатор</button>
+            <button class="tab-btn active" id="tab-morph-search" role="tab" aria-selected="true">Поиск</button>
+            <button class="tab-btn" id="tab-feminitive" role="tab" aria-selected="false">Феминизатор</button>
             <button class="tab-btn" id="tab-inflect" role="tab" aria-selected="false">Инфлектор</button>
             <button class="tab-btn" id="tab-decompose" role="tab" aria-selected="false">Морфемы</button>
             <button class="tab-btn" id="tab-cognates" role="tab" aria-selected="false">Родственные</button>
             <button class="tab-btn" id="tab-paradigm" role="tab" aria-selected="false">Парадигма</button>
             <button class="tab-btn" id="tab-suffix-stats" role="tab" aria-selected="false">Суффиксы</button>
             <button class="tab-btn" id="tab-catalog" role="tab" aria-selected="false">Каталог</button>
-            <button class="tab-btn" id="tab-morph-search" role="tab" aria-selected="false">Поиск</button>
             <button class="tab-btn" id="tab-executor" role="tab" aria-selected="false">Код на русском</button>
             <button class="tab-btn" id="tab-rules-catalog" role="tab" aria-selected="false">Карта правил</button>
         </nav>
@@ -38,7 +38,7 @@
         <main class="glass-panel">
             
             <!-- Section: Feminitive Derivation -->
-            <section id="sec-feminitive" class="tab-content active">
+            <section id="sec-feminitive" class="tab-content">
                 <div class="content-grid">
                     <div class="control-panel">
                         <h2>Генерация ролей и профессий</h2>
@@ -242,7 +242,7 @@
             </section>
 
             <!-- Section: Morpheme Search -->
-            <section id="sec-morph-search" class="tab-content">
+            <section id="sec-morph-search" class="tab-content active">
                 <div class="content-grid">
                     <div class="control-panel">
                         <h2>Поиск по морфеме</h2>
@@ -253,7 +253,7 @@
                         </div>
                         <div class="input-group">
                             <label>Тип морфемы</label>
-                            <div class="style-toggle-container" style="display: flex; flex-wrap: wrap; gap: 6px;">
+                            <div class="msrch-nav-panel">
                                 <button class="style-btn active" id="btn-msrch-any">Все</button>
                                 <button class="style-btn" id="btn-msrch-prefix">Приставка</button>
                                 <button class="style-btn" id="btn-msrch-suffix">Суффикс</button>
@@ -263,14 +263,15 @@
                         </div>
                         <div class="input-group">
                             <label>Источник</label>
-                            <div style="display: flex; gap: 6px;">
+                            <div class="msrch-nav-panel">
                                 <button class="style-btn active" id="btn-src-tikhonov">Тихонов (100K)</button>
-                                <button class="style-btn" id="btn-src-opencorpora" style="background: rgba(168, 85, 247, 0.15); border: 1px solid rgba(168, 85, 247, 0.35); color: #c084fc;">OpenCorpora (3.1M форм)</button>
+                                <button class="style-btn msrch-premium-badge" id="btn-src-opencorpora">OpenCorpora (3.1M форм)</button>
+                                <button class="style-btn" id="btn-src-algorithmic" style="border-color:#22c55e;color:#22c55e">OpenCorpora (62K)</button>
                             </div>
                         </div>
                         <div class="input-group" id="pos-filter-group" style="display: none;">
                             <label>Часть речи</label>
-                            <div style="display: flex; flex-wrap: wrap; gap: 6px;">
+                            <div class="msrch-nav-panel">
                                 <button class="style-btn active" data-pos="any">Все</button>
                                 <button class="style-btn" data-pos="NOUN">Сущ.</button>
                                 <button class="style-btn" data-pos="ADJF">Прил.</button>
@@ -298,7 +299,8 @@
                             <input type="text" id="msrch-word-filter" placeholder="Фильтр по слову / части слова..." autocomplete="off"
                                 style="width: 100%; padding: 8px 12px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--text-primary); font-size: 0.85rem;">
                         </div>
-                        <div id="msrch-result-box" class="result-box empty" style="max-height: calc(100vh - 380px); overflow-y: auto;">
+                        <div id="msrch-actions-bar" style="display:none;"></div>
+                        <div id="msrch-result-box" class="result-box empty" style="overflow-y: auto; flex: 1 1 0; min-height: 0;">
                             <div class="empty-state">Введите морфему и нажмите «Найти»</div>
                         </div>
                     </div>
@@ -372,6 +374,6 @@
     </div>
 
     <!-- Scripts -->
-    <script src="js/main.js?v=12"></script>
+    <script src="js/main.js?v=16"></script>
 </body>
 </html>

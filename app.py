@@ -87,6 +87,8 @@ class SuffixStatsRequest(BaseModel):
 class MorphemeSearchRequest(BaseModel):
     morpheme: str
     morpheme_type: str  # 'prefix', 'suffix', 'ending', 'root', 'any'
+    page: int = 1
+    page_size: int = 5000
 
 
 
@@ -584,44 +586,36 @@ def _get_wikt_suffixes() -> set:
 _morpheme_index = None
 def _get_morpheme_index():
     """Build inverted index: (type, morpheme) -> list of words.
-
-    Tikhonov stores everything after the first root as 'suffixes',
-    including second roots of compound words. We split them:
-    - 'suffix' = verified against Wiktionary (559 real suffixes)
-    - 'compound_root' = second stems of compound words
+    
+    Reads from word_morphemes table (has ё-restored lemmas).
     """
     global _morpheme_index
     if _morpheme_index is not None:
         return _morpheme_index
 
-    data = _get_tikhonov_data()
-    dictionary = data.get('dictionary', {})
-    wikt_suf = _get_wikt_suffixes()
-
+    conn = sqlite3.connect(_PARADIGMS_DB)
+    c = conn.cursor()
+    
+    # Map DB mtype to index type
+    type_map = {'PREFIX': 'prefix', 'ROOT': 'root', 'SUFFIX': 'suffix', 'ENDING': 'ending', 'LINK': 'link'}
+    
+    c.execute("""
+        SELECT DISTINCT lemma, morpheme, mtype FROM word_morphemes 
+        WHERE source = 'tikhonov'
+    """)
+    
     idx = {}  # (type, morpheme) -> [word1, word2, ...]
-    for word, entry in dictionary.items():
-        # Prefixes
-        for p in entry.get('prefixes', []):
-            p_clean = p.strip().lower()
-            if _is_clean_morpheme(p_clean):
-                idx.setdefault(('prefix', p_clean), []).append(word)
-        # Suffixes — split into real suffixes vs compound roots
-        for s in entry.get('suffixes', []):
-            s_clean = s.strip().lower()
-            if _is_clean_morpheme(s_clean):
-                if s_clean in wikt_suf:
-                    idx.setdefault(('suffix', s_clean), []).append(word)
-                else:
-                    idx.setdefault(('compound_root', s_clean), []).append(word)
-        # Ending
-        ending = entry.get('ending', '').strip().lower()
-        if _is_clean_morpheme(ending):
-            idx.setdefault(('ending', ending), []).append(word)
-        # Root
-        root = entry.get('root', '').strip().lower()
-        if _is_clean_morpheme(root):
-            idx.setdefault(('root', root), []).append(word)
-
+    for lemma, morpheme, mtype in c.fetchall():
+        t = type_map.get(mtype, 'suffix')
+        if t == 'link':
+            continue  # Don't index interfixes
+        idx.setdefault((t, morpheme), []).append(lemma)
+    
+    # Deduplicate word lists
+    for key in idx:
+        idx[key] = sorted(set(idx[key]))
+    
+    conn.close()
     _morpheme_index = idx
     return _morpheme_index
 
@@ -631,6 +625,8 @@ def api_morpheme_search(req: MorphemeSearchRequest):
     try:
         idx = _get_morpheme_index()
         morpheme = req.morpheme.strip().lower()
+        if morpheme == '*':
+            morpheme = ''
         mtype = req.morpheme_type.strip().lower()
 
         if not morpheme:
@@ -640,54 +636,171 @@ def api_morpheme_search(req: MorphemeSearchRequest):
                 for t in ('prefix', 'suffix', 'ending', 'root', 'compound_root'):
                     morphemes = sorted(set(m for (tp, m) in idx if tp == t))
                     if morphemes:
-                        results[t] = morphemes
+                        results[t] = [{"value": m, "count": len(idx.get((t, m), []))} for m in morphemes]
                 total = sum(len(v) for v in results.values())
+                flat_results = []
+                for t, ms in results.items():
+                    flat_results.extend(ms)
+                results = flat_results
             else:
                 morphemes = sorted(set(m for (tp, m) in idx if tp == mtype))
-                results = {mtype: morphemes} if morphemes else {}
-                total = len(morphemes)
+                results = []
+                for m in morphemes:
+                    words = idx.get((mtype, m), [])
+                    results.append({"value": m, "count": len(words), "example": words[0] if words else ""})
+                results.sort(key=lambda x: x["value"])
+                total = len(results)
+            
+            # Pagination
+            page = max(1, req.page)
+            page_size = req.page_size if req.page_size > 0 else 0
+            pagination = None
+            if page_size > 0 and total > page_size:
+                total_pages = (total + page_size - 1) // page_size
+                offset = (page - 1) * page_size
+                page_results = results[offset:offset + page_size]
+                pagination = {
+                    "page": page,
+                    "page_size": page_size,
+                    "total_pages": total_pages,
+                    "shown": len(page_results)
+                }
+                results = page_results
+
             return {
                 "morpheme": "",
                 "type": mtype,
                 "results": results,
-                "total": total
+                "total": total,
+                "only_unique": True,
+                "pagination": pagination
             }
+
+        # Helper: lookup with ё↔е fallback
+        def _lookup(t, m):
+            words = idx.get((t, m), [])
+            if not words:
+                # Try ё↔е fallback
+                alt = m.replace('ё', 'е') if 'ё' in m else m.replace('е', 'ё')
+                if alt != m:
+                    words = idx.get((t, alt), [])
+            return words
+
+        # Collect all words from results, then batch-lookup decompositions
+        def _add_decomp(results_dict):
+            all_words = []
+            for words in results_dict.values():
+                all_words.extend(words)
+            if not all_words:
+                return {}
+            conn2 = sqlite3.connect(_PARADIGMS_DB)
+            c2 = conn2.cursor()
+            decomp = {}
+            source_rank = {}  # lemma -> best source rank (tikhonov=0, algorithmic=1, unknown=2)
+            rank_map = {'tikhonov': 0, 'algorithmic': 1, 'unknown': 2}
+            batch_size = 900
+            for i in range(0, len(all_words), batch_size):
+                batch = all_words[i:i+batch_size]
+                placeholders = ','.join('?' * len(batch))
+                c2.execute(f"""
+                    SELECT lemma, morpheme, mtype, source FROM word_morphemes
+                    WHERE lemma IN ({placeholders})
+                    ORDER BY lemma, position
+                """, batch)
+                for lemma, morph, mt, src in c2.fetchall():
+                    r = rank_map.get(src, 2)
+                    cur_rank = source_rank.get(lemma, 99)
+                    if r < cur_rank:
+                        # Better source found, replace
+                        decomp[lemma] = [[mt, morph]]
+                        source_rank[lemma] = r
+                    elif r == cur_rank:
+                        decomp.setdefault(lemma, []).append([mt, morph])
+            conn2.close()
+            # Deduplicate: keep only first POS decomposition per lemma
+            for lemma in decomp:
+                seen = set()
+                unique = []
+                for pair in decomp[lemma]:
+                    key = (pair[0], pair[1])
+                    if key not in seen:
+                        seen.add(key)
+                        unique.append(pair)
+                decomp[lemma] = unique
+            return decomp
+
+        page = req.page
+        page_size = req.page_size if req.page_size > 0 else 0
 
         if mtype == 'any':
             # Search across all types
             results = {}
-            for t in ('prefix', 'suffix', 'ending', 'root', 'compound_root'):
-                words = idx.get((t, morpheme), [])
+            for t in ('prefix', 'suffix', 'ending', 'root'):
+                words = _lookup(t, morpheme)
                 if words:
                     results[t] = words
             total = sum(len(v) for v in results.values())
-            return {
+            
+            # Paginate the combined word list
+            pagination = None
+            if page_size > 0 and total > page_size:
+                total_pages = (total + page_size - 1) // page_size
+                offset = (page - 1) * page_size
+                # Flatten, paginate, then reconstruct
+                all_words = []
+                for t in ('prefix', 'suffix', 'ending', 'root'):
+                    for w in results.get(t, []):
+                        all_words.append((t, w))
+                page_words = all_words[offset:offset + page_size]
+                results = {}
+                for t, w in page_words:
+                    results.setdefault(t, []).append(w)
+                pagination = {"page": page, "page_size": page_size, "total_pages": total_pages, "shown": len(page_words)}
+            
+            # Decomp for current page only (always fits)
+            decomp = _add_decomp(results)
+            resp = {
                 "morpheme": morpheme,
                 "type": "any",
                 "results": results,
-                "total": total
+                "total": total,
+                "decomp": decomp
             }
+            if pagination:
+                resp["pagination"] = pagination
+            return resp
         else:
-            words = idx.get((mtype, morpheme), [])
-            return {
+            words = _lookup(mtype, morpheme)
+            total = len(words)
+            
+            # Paginate
+            pagination = None
+            if page_size > 0 and total > page_size:
+                total_pages = (total + page_size - 1) // page_size
+                offset = (page - 1) * page_size
+                page_words = words[offset:offset + page_size]
+                pagination = {"page": page, "page_size": page_size, "total_pages": total_pages, "shown": len(page_words)}
+                words = page_words
+            
+            results = {mtype: words} if words else {}
+            # Decomp for current page only (always fits)
+            decomp = _add_decomp(results)
+            resp = {
                 "morpheme": morpheme,
                 "type": mtype,
-                "results": {mtype: words} if words else {},
-                "total": len(words)
+                "results": results,
+                "total": total,
+                "decomp": decomp
             }
+            if pagination:
+                resp["pagination"] = pagination
+            return resp
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 # ---------------------------------------------------------------------------
 # API: Ending search via OpenCorpora paradigms (3.1M forms)
 # ---------------------------------------------------------------------------
-class EndingSearchRequest(BaseModel):
-    ending: str
-    pos: str = "any"
-    search_type: str = "ending"  # prefix, suffix, ending, any
-    word_filter: str = ""  # additional substring filter on form
-    limit: int = 5000  # max results per POS group
-
 _PARADIGMS_DB = os.path.join(str(PARENT_DIR), 'data', 'language', 'ru_paradigms.sqlite3')
 
 POS_LABELS = {
@@ -698,75 +811,533 @@ POS_LABELS = {
     "PREP": "Предлог", "CONJ": "Союз", "PRCL": "Частица", "INTJ": "Междометие",
 }
 
-@app.post("/api/ending_search")
-async def api_ending_search(req: EndingSearchRequest):
-    ending = req.ending.strip().lower()
-    pos = req.pos.strip().upper()
-    stype = req.search_type.strip().lower()
-    if len(ending) > 10:
-        raise HTTPException(status_code=400, detail="ending too long")
+class EndingSearchRequest(BaseModel):
+    ending: str
+    pos: str = "any"
+    search_type: str = "ending"  # prefix, suffix, root, ending, any
+    word_filter: str = ""  # additional substring filter on form
+    limit: int = 5000  # max results per POS group (0 = unlimited)
+    page: int = 1  # 1-based page number
+    page_size: int = 5000  # items per page (0 = all)
+    uncovered_only: bool = False
 
+def _fetch_ending_words(req: EndingSearchRequest, c):
+    ending = req.ending.lower().strip()
+    pos = req.pos.upper().strip()
+    stype = req.search_type.lower().strip()
+    word_filter = getattr(req, 'word_filter', '').lower().strip()
+
+    if stype == 'prefix':
+        pattern = f'{ending}%'
+    elif stype == 'suffix' or stype == 'ending':
+        pattern = f'%{ending}'
+    elif stype == 'root' or stype == 'any':
+        pattern = f'%{ending}%'
+    else:
+        pattern = f'%{ending}'
+
+    query = "SELECT lemma, word FROM paradigms WHERE word LIKE ?"
+    params = [pattern]
+
+    if pos != 'ANY':
+        query += " AND pos = ?"
+        params.append(pos)
+    
+    if word_filter:
+        query += " AND word LIKE ?"
+        params.append(f'%{word_filter}%')
+
+    c.execute(query, params)
+    return c.fetchall()
+
+@app.post("/api/ending_export")
+def api_ending_export(req: EndingSearchRequest):
     try:
         conn = sqlite3.connect(_PARADIGMS_DB)
         c = conn.cursor()
+        
+        all_rows = _fetch_ending_words(req, c)
+        all_lemmas = [r[0] for r in all_rows]  # r[0] = lemma
+        unique_words = list(dict.fromkeys(all_lemmas))
+        
+        # Decompose only to find uncovered
+        from engine.hdc.morpheme_algebra import MorphemeAlgebra
+        _ma = MorphemeAlgebra()
+        
+        results = []
+        if getattr(req, 'uncovered_only', False):
+            for w in unique_words:
+                decomp = _ma.decompose(w)
+                if len(decomp) == 1 and decomp[0][0] == "ROOT":
+                    results.append(w)
+        else:
+            results = unique_words
+            
+        conn.close()
+        return {"words": results}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class AlgorithmicRequest(BaseModel):
+    morpheme_type: str = "any"  # prefix, suffix, root, ending, any
+    page: int = 1
+    page_size: int = 200
+
+@app.post("/api/algorithmic_registry")
+def api_algorithmic_registry(req: AlgorithmicRequest):
+    """Return unique morphemes of a given type from algorithmic source — same format as Tikhonov/OC registry."""
+    try:
+        conn = sqlite3.connect(_PARADIGMS_DB)
+        c = conn.cursor()
+        
+        type_map = {'prefix': 'PREFIX', 'suffix': 'SUFFIX', 'root': 'ROOT', 'ending': 'ENDING'}
+        target = type_map.get(req.morpheme_type, 'SUFFIX')
+        
+        c.execute("""
+            SELECT morpheme, COUNT(DISTINCT lemma) as cnt
+            FROM word_morphemes
+            WHERE mtype = ? AND source = 'algorithmic'
+            GROUP BY morpheme
+            ORDER BY morpheme
+        """, (target,))
+        results = [{"value": r[0], "count": r[1]} for r in c.fetchall()]
+        
+        # Example words for download
+        if req.page_size == 0:
+            for item in results:
+                c.execute("SELECT lemma FROM word_morphemes WHERE mtype = ? AND morpheme = ? AND source = 'algorithmic' LIMIT 1",
+                          (target, item["value"]))
+                row = c.fetchone()
+                item["example"] = row[0] if row else ""
+        
+        conn.close()
+        return {
+            "ending": "*",
+            "only_unique": True,
+            "type": target,
+            "total": len(results),
+            "results": results,
+            "source": "algorithmic"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+
+
+@app.post("/api/algorithmic_words")
+def api_algorithmic_words(req: AlgorithmicRequest):
+    """Return words decomposed by the algorithmic method from word_morphemes table."""
+    try:
+        conn = sqlite3.connect(_PARADIGMS_DB)
+        c = conn.cursor()
+        
+        # Get unique lemmas with algorithmic source
+        mtype_filter = ""
+        params = ['algorithmic']
+        if req.morpheme_type != 'any':
+            type_map = {'prefix': 'PREFIX', 'suffix': 'SUFFIX', 'root': 'ROOT', 'ending': 'ENDING'}
+            target = type_map.get(req.morpheme_type, 'ROOT')
+            mtype_filter = " AND lemma IN (SELECT DISTINCT lemma FROM word_morphemes WHERE mtype = ? AND source = 'algorithmic')"
+            params.append(target)
+        
+        # Count total
+        c.execute(f"SELECT COUNT(DISTINCT lemma) FROM word_morphemes WHERE source = ?{mtype_filter}", params)
+        total = c.fetchone()[0]
+        
+        # Get paginated lemmas
+        page = max(1, req.page)
+        page_size = req.page_size if req.page_size > 0 else total
+        offset = (page - 1) * page_size
+        
+        c.execute(f"""
+            SELECT DISTINCT lemma FROM word_morphemes 
+            WHERE source = ?{mtype_filter}
+            ORDER BY lemma
+            LIMIT ? OFFSET ?
+        """, params + [page_size, offset])
+        lemmas = [r[0] for r in c.fetchall()]
+        
+        # Get full decomposition for each lemma (pick one POS to avoid duplicates)
+        results = []
+        for lemma in lemmas:
+            c.execute("""
+                SELECT morpheme, mtype, position FROM word_morphemes 
+                WHERE lemma = ? AND source = 'algorithmic'
+                  AND pos = (SELECT MIN(pos) FROM word_morphemes WHERE lemma = ? AND source = 'algorithmic')
+                ORDER BY position
+            """, (lemma, lemma))
+            morphemes = [{"value": r[0], "type": r[1]} for r in c.fetchall()]
+            results.append({"lemma": lemma, "morphemes": morphemes})
+        
+        conn.close()
+        
+        total_pages = (total + page_size - 1) // page_size if page_size > 0 else 1
+        return {
+            "results": results,
+            "total": total,
+            "pagination": {
+                "page": page,
+                "page_size": page_size,
+                "total_pages": total_pages,
+                "shown": len(results)
+            }
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/ending_search")
+def api_ending_search(req: EndingSearchRequest):
+    try:
+        conn = sqlite3.connect(_PARADIGMS_DB)
+        c = conn.cursor()
+        
+        ending = req.ending.lower().strip()
+        stype = req.search_type.lower().strip()
+        pos = req.pos.upper().strip()
+        is_empty_search = (not ending or ending == '*')
+        
+        # Curated prefix classification (academic morphology: Грамота, Ефремова, Wiktionary)
+        _VALID_PREFIXES = {
+            # Core Russian prefixes
+            'за', 'пере', 'по', 'на', 'о', 'вы', 'про', 'у', 'с', 'от', 'при', 'под',
+            'об', 'рас', 'раз', 'до', 'не', 'из', 'ис', 'со', 'вз', 'без', 'бес',
+            'вс', 'пре', 'пред', 'над', 'низ', 'меж', 'ни', 'обо', 'ото', 'подо', 'разо',
+            'нис', 'изо', 'сверх', 'надо', 'пра', 'взо', 'черес', 'через', 'чрез',
+            # Foreign prefixes
+            'анти', 'де', 'дез', 'ре', 'экс', 'дис', 'контр', 'интер', 'суб',
+            'транс', 'пост', 'пан', 'ультра', 'экстра', 'супер', 'архи',
+        }
+        _PREFIX_LIKE = {'су', 'па', 'в', 'между', 'около'}  # historical/ambiguous
+        # Excluded: пер, ра, бе, межд, экстр, ни, пр — not valid prefixes
+        
+        if is_empty_search and stype != 'any':
+            m_type_map = {'prefix': 'PREFIX', 'suffix': 'SUFFIX', 'root': 'ROOT', 'ending': 'ENDING'}
+            target_type = m_type_map.get(stype, 'PREFIX')
+            
+            # Use word_morphemes table (indexed, fast)
+            if target_type == 'PREFIX':
+                all_valid = _VALID_PREFIXES | _PREFIX_LIKE
+                placeholders = ','.join(['?' for _ in all_valid])
+                c.execute(f"""
+                    SELECT morpheme, COUNT(DISTINCT lemma) as cnt 
+                    FROM word_morphemes 
+                    WHERE mtype = 'PREFIX' AND morpheme IN ({placeholders}) AND source != 'unknown'
+                    GROUP BY morpheme ORDER BY morpheme
+                """, list(all_valid))
+                unique_list = [{"value": r[0], "count": r[1]} for r in c.fetchall()]
+            else:
+                # For root: count lemmas that exist in BOTH word_morphemes AND paradigms
+                # (matching the actual search behavior which joins the two tables)
+                if target_type == 'ROOT':
+                    c.execute("""
+                        SELECT wm.morpheme, COUNT(DISTINCT wm.lemma) as cnt
+                        FROM word_morphemes wm
+                        WHERE wm.mtype = 'ROOT' AND wm.source != 'unknown'
+                          AND wm.lemma IN (SELECT DISTINCT lemma FROM paradigms)
+                        GROUP BY wm.morpheme ORDER BY wm.morpheme
+                    """)
+                    unique_list = [{"value": r[0], "count": r[1]} for r in c.fetchall()]
+                else:
+                    # For suffix/ending: use precomputed lemma counts
+                    unique_list = []
+                    try:
+                        c.execute("""
+                            SELECT morpheme, form_count FROM morpheme_form_counts 
+                            WHERE mtype = ? AND stype = ?
+                            ORDER BY morpheme
+                        """, (target_type, stype))
+                        unique_list = [{"value": r[0], "count": r[1]} for r in c.fetchall()]
+                    except sqlite3.OperationalError:
+                        pass
+                    
+                    if not unique_list:
+                        # Table empty or missing — fallback to lemma count from word_morphemes
+                        c.execute("""
+                            SELECT morpheme, COUNT(DISTINCT lemma) as cnt 
+                            FROM word_morphemes 
+                            WHERE mtype = ? AND source != 'unknown'
+                            GROUP BY morpheme ORDER BY morpheme
+                        """, (target_type,))
+                        unique_list = [{"value": r[0], "count": r[1]} for r in c.fetchall()]
+            
+            # Add example words only for downloads (slow: 1 query per morpheme)
+            if req.page_size == 0:
+                for item in unique_list:
+                    c.execute("SELECT lemma FROM word_morphemes WHERE mtype = ? AND morpheme = ? AND source != 'unknown' LIMIT 1",
+                              (target_type, item["value"]))
+                    row = c.fetchone()
+                    item["example"] = row[0] if row else ""
+            real_total = len(unique_list)
+            conn.close()
+            return {
+                "ending": ending,
+                "only_unique": True,
+                "type": target_type,
+                "results": unique_list,
+                "total": real_total
+            }
         if stype == 'prefix':
             pattern = f'{ending}%'
         elif stype == 'suffix' or stype == 'ending':
             pattern = f'%{ending}'
         else:
             pattern = f'%{ending}%'
-        limit = req.limit
-        if limit <= 0:
-            limit = None  # unlimited
-        else:
-            limit = min(limit, 50000)  # cap at 50K per POS
         word_filter = req.word_filter.strip().lower()
 
         # Build additional word filter clause
         extra_where = ""
         extra_params = []
         if word_filter:
-            extra_where = " AND form LIKE ?"
+            extra_where = " AND lemma LIKE ?"
             extra_params = [f'%{word_filter}%']
-            limit = min(limit, 50000)  # allow more with filter
 
-        if pos == "ANY" or pos == "":
-            c.execute(
-                f"SELECT pos, form FROM (SELECT DISTINCT pos, form FROM paradigms WHERE form LIKE ?{extra_where}) ORDER BY pos, form",
-                (pattern, *extra_params)
-            )
+        # Pagination params
+        page = max(1, req.page)
+        page_size = req.page_size if req.page_size > 0 else 0  # 0 = unlimited
+
+        # For ROOT search on OpenCorpora: use word_morphemes for both POS and lemma list,
+        # paradigms only as existence filter. This gives each lemma exactly ONE POS.
+        if stype == 'root':
+            lemma_where = ""
+            lemma_params = []
+            if word_filter:
+                lemma_where = " AND wm.lemma LIKE ?"
+                lemma_params = [f'%{word_filter}%']
+
+            if pos == "ANY" or pos == "":
+                # Fetch all (pos, lemma) pairs — need dedup since same lemma has multiple POS
+                c.execute(f"""
+                    SELECT DISTINCT wm.pos, wm.lemma FROM word_morphemes wm
+                    WHERE wm.mtype='ROOT' AND wm.morpheme=? AND wm.source != 'unknown'
+                      AND wm.lemma IN (SELECT DISTINCT lemma FROM paradigms){lemma_where}
+                    ORDER BY wm.pos, wm.lemma
+                """, (ending, *lemma_params))
+                rows = c.fetchall()
+                
+                # Deduplicate: each lemma → one POS (highest priority)
+                _POS_PRI = {
+                    'NOUN': 0, 'ADJF': 1, 'VERB': 2, 'INFN': 3, 'ADVB': 4,
+                    'ADJS': 5, 'PRTF': 6, 'PRTS': 7, 'GRND': 8, 'COMP': 9,
+                    'NUMR': 10, 'NPRO': 11, 'PRED': 12, 'PREP': 13,
+                    'CONJ': 14, 'PRCL': 15, 'INTJ': 16,
+                }
+                best_pos = {}
+                for p, lemma in rows:
+                    pri = _POS_PRI.get(p, 99)
+                    if lemma not in best_pos or pri < best_pos[lemma][0]:
+                        best_pos[lemma] = (pri, p)
+                
+                # Group -ся/-сь reflexive variants with base forms
+                reflexive_bases = set()
+                to_remove = set()
+                for lemma in list(best_pos.keys()):
+                    if lemma.endswith('ся') or lemma.endswith('сь'):
+                        base = lemma[:-2]
+                        if base in best_pos:
+                            reflexive_bases.add(base)
+                            to_remove.add(lemma)
+                for lemma in to_remove:
+                    del best_pos[lemma]
+                
+                results = {}
+                for lemma in sorted(best_pos, key=lambda l: (best_pos[l][0], l)):
+                    p = best_pos[lemma][1]
+                    display = f"{lemma}(ся)" if lemma in reflexive_bases else lemma
+                    results.setdefault(p, []).append(display)
+                
+                pos_counts = {p: len(v) for p, v in results.items()}
+                total = sum(pos_counts.values())
+                
+                # Apply pagination after dedup
+                if page_size > 0:
+                    offset = (page - 1) * page_size
+                    all_lemmas = []
+                    for p in sorted(results.keys(), key=lambda x: _POS_PRI.get(x, 99)):
+                        for lemma in results[p]:
+                            all_lemmas.append((p, lemma))
+                    page_slice = all_lemmas[offset:offset + page_size]
+                    results = {}
+                    for p, lemma in page_slice:
+                        results.setdefault(p, []).append(lemma)
+            else:
+                c.execute(f"""
+                    SELECT COUNT(DISTINCT wm.lemma) FROM word_morphemes wm
+                    WHERE wm.mtype='ROOT' AND wm.morpheme=? AND wm.pos=? AND wm.source != 'unknown'
+                      AND wm.lemma IN (SELECT DISTINCT lemma FROM paradigms){lemma_where}
+                """, (ending, pos, *lemma_params))
+                total = c.fetchone()[0]
+                pos_counts = {pos: total}
+
+                if page_size > 0:
+                    offset = (page - 1) * page_size
+                    c.execute(f"""
+                        SELECT DISTINCT wm.lemma FROM word_morphemes wm
+                        WHERE wm.mtype='ROOT' AND wm.morpheme=? AND wm.pos=? AND wm.source != 'unknown'
+                          AND wm.lemma IN (SELECT DISTINCT lemma FROM paradigms){lemma_where}
+                        ORDER BY wm.lemma LIMIT ? OFFSET ?
+                    """, (ending, pos, *lemma_params, page_size, offset))
+                else:
+                    c.execute(f"""
+                        SELECT DISTINCT wm.lemma FROM word_morphemes wm
+                        WHERE wm.mtype='ROOT' AND wm.morpheme=? AND wm.pos=? AND wm.source != 'unknown'
+                          AND wm.lemma IN (SELECT DISTINCT lemma FROM paradigms){lemma_where}
+                        ORDER BY wm.lemma
+                    """, (ending, pos, *lemma_params))
+                rows = c.fetchall()
+                lemmas = [r[0] for r in rows]
+                results = {pos: lemmas}
+        elif pos == "ANY" or pos == "":
+            # Fetch all unique (pos, lemma) pairs — need dedup since paradigms has form-level POS
+            if page_size > 0:
+                # Fetch slightly more to account for dedup reducing count
+                offset = (page - 1) * page_size
+                c.execute(
+                    f"SELECT DISTINCT pos, lemma FROM paradigms WHERE form LIKE ?{extra_where} ORDER BY pos, lemma",
+                    (pattern, *extra_params)
+                )
+            else:
+                c.execute(
+                    f"SELECT DISTINCT pos, lemma FROM paradigms WHERE form LIKE ?{extra_where} ORDER BY pos, lemma",
+                    (pattern, *extra_params)
+                )
             rows = c.fetchall()
+            
+            # Deduplicate: each lemma → one POS (highest priority)
+            _POS_PRI = {
+                'NOUN': 0, 'ADJF': 1, 'VERB': 2, 'INFN': 3, 'ADVB': 4,
+                'ADJS': 5, 'PRTF': 6, 'PRTS': 7, 'GRND': 8, 'COMP': 9,
+                'NUMR': 10, 'NPRO': 11, 'PRED': 12, 'PREP': 13,
+                'CONJ': 14, 'PRCL': 15, 'INTJ': 16,
+            }
+            best_pos = {}
+            for p, lemma in rows:
+                pri = _POS_PRI.get(p, 99)
+                if lemma not in best_pos or pri < best_pos[lemma][0]:
+                    best_pos[lemma] = (pri, p)
+            
+            # Group -ся/-сь reflexive variants with base forms
+            reflexive_bases = set()
+            to_remove = set()
+            for lemma in list(best_pos.keys()):
+                if lemma.endswith('ся') or lemma.endswith('сь'):
+                    base = lemma[:-2]
+                    if base in best_pos:
+                        reflexive_bases.add(base)
+                        to_remove.add(lemma)
+            for lemma in to_remove:
+                del best_pos[lemma]
+            
             results = {}
-            for p, form in rows:
-                results.setdefault(p, []).append(form)
-            total = 0
-            for p in results:
-                total += len(results[p])
-                results[p] = sorted(results[p])[:limit]
+            for lemma in sorted(best_pos, key=lambda l: (best_pos[l][0], l)):
+                p = best_pos[lemma][1]
+                display = f"{lemma}(ся)" if lemma in reflexive_bases else lemma
+                results.setdefault(p, []).append(display)
+            
+            pos_counts = {p: len(v) for p, v in results.items()}
+            total = sum(pos_counts.values())
+            
+            # Apply pagination after dedup
+            if page_size > 0:
+                all_lemmas = []
+                for p in sorted(results.keys(), key=lambda x: _POS_PRI.get(x, 99)):
+                    for lemma in results[p]:
+                        all_lemmas.append((p, lemma))
+                page_slice = all_lemmas[offset:offset + page_size]
+                results = {}
+                for p, lemma in page_slice:
+                    results.setdefault(p, []).append(lemma)
         else:
+            # Single POS — count total (by unique lemma)
             c.execute(
-                f"SELECT DISTINCT form FROM paradigms WHERE pos = ? AND form LIKE ?{extra_where} ORDER BY form",
+                f"SELECT COUNT(DISTINCT lemma) FROM paradigms WHERE pos = ? AND form LIKE ?{extra_where}",
                 (pos, pattern, *extra_params)
             )
-            rows = c.fetchall()
-            forms = [r[0] for r in rows]
-            total = len(forms)
-            results = {pos: forms[:limit]}
+            total = c.fetchone()[0]
+            pos_counts = {pos: total}
 
-        # --- Morpheme decomposition for displayed words ---
-        all_words = []
+            # Fetch paginated lemmas
+            if page_size > 0:
+                offset = (page - 1) * page_size
+                c.execute(
+                    f"SELECT DISTINCT lemma FROM paradigms WHERE pos = ? AND form LIKE ?{extra_where} ORDER BY lemma LIMIT ? OFFSET ?",
+                    (pos, pattern, *extra_params, page_size, offset)
+                )
+            else:
+                c.execute(
+                    f"SELECT DISTINCT lemma FROM paradigms WHERE pos = ? AND form LIKE ?{extra_where} ORDER BY lemma",
+                    (pos, pattern, *extra_params)
+                )
+            rows = c.fetchall()
+            lemmas = [r[0] for r in rows]
+            results = {pos: lemmas}
+
+        # Calculate pagination metadata
+        shown = sum(len(v) for v in results.values())
+        total_pages = ((total + page_size - 1) // page_size) if page_size > 0 else 1
+        all_words_page = []
         for wlist in results.values():
-            all_words.extend(wlist)
+            for w in wlist:
+                # Strip (ся) suffix for decomposition lookup
+                all_words_page.append(w[:-4] if w.endswith('(ся)') else w)
+
+        # Calculate global uncovered count if total is not too huge
+        # Skip for root searches — LIKE '%пуск%' matches substrings, not root morphemes
+        uncovered_only_total = -1
+        if stype != 'root' and total < 20000:
+            # We need to fetch ALL distinct forms for this query to check decomposition
+            c.execute(
+                f"SELECT DISTINCT form FROM paradigms WHERE form LIKE ?{extra_where}",
+                (pattern, *extra_params)
+            )
+            all_forms_global = [r[0] for r in c.fetchall()]
+            
+            from engine.hdc.morpheme_algebra import MorphemeAlgebra
+            _ma = MorphemeAlgebra()
+            
+            uncovered_count = 0
+            for w in all_forms_global:
+                decomp_res = _ma.decompose(w)
+                if len(decomp_res) == 1 and decomp_res[0][0] == "ROOT":
+                    uncovered_count += 1
+            uncovered_only_total = uncovered_count
 
         decomp = {}
-        if all_words:
+        if stype == 'root' and all_words_page:
+            # For root search: use word_morphemes for decomposition (correct Tikhonov data)
+            # Take only one POS per lemma to avoid duplicate morpheme rows
+            batch_size = 900
+            for i in range(0, len(all_words_page), batch_size):
+                batch = all_words_page[i:i+batch_size]
+                placeholders = ','.join('?' * len(batch))
+                # First, find one POS per lemma (MIN gives alphabetically first)
+                c.execute(f"""
+                    SELECT lemma, MIN(pos) as pos FROM word_morphemes
+                    WHERE lemma IN ({placeholders}) AND source != 'unknown'
+                    GROUP BY lemma
+                """, batch)
+                lemma_pos = {r[0]: r[1] for r in c.fetchall()}
+                
+                # Now fetch morphemes for each lemma with its selected POS
+                for lemma, pos_val in lemma_pos.items():
+                    c.execute("""
+                        SELECT mtype, morpheme FROM word_morphemes
+                        WHERE lemma = ? AND pos = ? AND source != 'unknown'
+                        ORDER BY position
+                    """, (lemma, pos_val))
+                    parts = [[r[0], r[1]] for r in c.fetchall()]
+                    if parts:
+                        decomp[lemma] = parts
+        elif all_words_page:
             tikh = _get_tikhonov_data().get('dictionary', {})
 
             # Batch lookup: form → lemma
             batch_size = 900
             form_to_lemma = {}
-            for i in range(0, len(all_words), batch_size):
-                batch = all_words[i:i+batch_size]
+            for i in range(0, len(all_words_page), batch_size):
+                batch = all_words_page[i:i+batch_size]
                 placeholders = ','.join('?' * len(batch))
                 c.execute(f'SELECT form, lemma FROM paradigms WHERE form IN ({placeholders})', batch)
                 for form, lemma in c.fetchall():
@@ -793,14 +1364,14 @@ async def api_ending_search(req: EndingSearchRequest):
                 """Build morpheme parts list from a Tikhonov entry (without ending)."""
                 parts = []
                 for p in entry.get('prefixes', []):
-                    pc = p.rstrip('0123456789')
-                    if pc and ' ' not in pc:
+                    pc = p.rstrip('0123456789').strip()
+                    if pc and not any(c in pc for c in '( ,;:<>=+'):
                         parts.append(['PREFIX', pc])
-                root = entry.get('root', '').rstrip('0123456789')
+                root = entry.get('root', '').rstrip('0123456789').strip()
                 parts.append(['ROOT', root])
                 for s in entry.get('suffixes', []):
-                    s_clean = s.rstrip('0123456789')
-                    if s_clean and '(' not in s_clean and ' ' not in s_clean and len(s_clean) < 8:
+                    s_clean = s.rstrip('0123456789').strip()
+                    if s_clean and not any(c in s_clean for c in '( ,;:<>=+') and len(s_clean) < 8:
                         parts.append(['SUFFIX', s_clean])
                 return parts
 
@@ -1005,7 +1576,7 @@ async def api_ending_search(req: EndingSearchRequest):
 
                 return parts
 
-            for word in all_words:
+            for word in all_words_page:
                 # --- Numeric forms: 1950-ые, 100-летний, 2-й ---
                 if any(ch.isdigit() for ch in word):
                     if '-' in word:
@@ -1146,8 +1717,59 @@ async def api_ending_search(req: EndingSearchRequest):
                                         fb_w_no_end.append(['ENDING', end_w])
                                     decomp[word] = fb_w_no_end
 
+            # --- Filtering by morpheme type (if requested) ---
+            # Skip for root search: word_morphemes already guarantees correct root
+            if stype in ('prefix', 'suffix'):
+                filtered_results = {}
+                filtered_decomp = {}
+                m_type_map = {'prefix': 'PREFIX', 'suffix': 'SUFFIX', 'root': 'ROOT'}
+                target_type = m_type_map[stype]
+                
+                for p, words in results.items():
+                    kept_words = []
+                    for w in words:
+                        # Strip (ся) for decomp lookup
+                        lookup_key = w[:-4] if w.endswith('(ся)') else w
+                        parts = decomp.get(lookup_key) or decomp.get(w)
+                        if parts:
+                            # Match if any part of target_type contains the searched string
+                            # or if target_type is PREFIX and word starts with ending
+                            match = False
+                            for t, v in parts:
+                                if t == target_type and ending in v.lower():
+                                    match = True
+                                    break
+                            if match:
+                                kept_words.append(w)
+                                filtered_decomp[lookup_key] = parts
+                    if kept_words:
+                        filtered_results[p] = kept_words
+                
+                results = filtered_results
+                decomp = filtered_decomp
+                # Update total, pos_counts, pagination to reflect filtered results
+                pos_counts = {p: len(v) for p, v in results.items()}
+                total = sum(pos_counts.values())
+                shown = total
+                total_pages = 1  # After post-hoc filtering, pagination doesn't make sense
+
         conn.close()
-        unique_words = list(dict.fromkeys(all_words))  # deduplicate preserving order
+        
+        # Collect morpheme stats from the batch
+        morpheme_stats = {"PREFIX": {}, "ROOT": {}, "SUFFIX": {}, "ENDING": {}, "LINK": {}}
+        companion_roots = {}  # Second roots in compound words
+        for parts in decomp.values():
+            for t, v in parts:
+                if t in morpheme_stats:
+                    # For root search: separate the searched root from companion roots
+                    if stype == 'root' and t == 'ROOT' and ending not in v.lower():
+                        companion_roots[v] = companion_roots.get(v, 0) + 1
+                    else:
+                        morpheme_stats[t][v] = morpheme_stats[t].get(v, 0) + 1
+        if companion_roots:
+            morpheme_stats["COMPANION_ROOT"] = companion_roots
+                    
+        unique_words = list(dict.fromkeys(all_words_page))  # deduplicate preserving order
         decomp_count = len(decomp)
         uncovered = [w for w in unique_words if w not in decomp]
         return {
@@ -1156,13 +1778,22 @@ async def api_ending_search(req: EndingSearchRequest):
             "results": results,
             "total": total,
             "pos_labels": POS_LABELS,
+            "pos_counts": pos_counts,
             "decomp": decomp,
+            "morpheme_stats": morpheme_stats,
             "coverage": {
                 "decomposed": decomp_count,
                 "total_shown": len(unique_words),
                 "pct": round(100 * decomp_count / len(unique_words), 1) if unique_words else 0
             },
-            "uncovered": uncovered
+            "uncovered": uncovered,
+            "uncovered_only_total": uncovered_only_total,
+            "pagination": {
+                "page": page,
+                "page_size": page_size,
+                "total_pages": total_pages,
+                "shown": shown,
+            }
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

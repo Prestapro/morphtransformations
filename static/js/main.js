@@ -220,9 +220,6 @@ document.addEventListener("DOMContentLoaded", () => {
                 builderGender.disabled = false;
             } else if (builderTense.value === "pres" || builderTense.value === "futr") {
                 builderPerson.disabled = false;
-            } else {
-                builderGender.disabled = false;
-                builderPerson.disabled = false;
             }
         } else if (activePos === "NUMR" || activePos === "NPRO") {
             builderCase.disabled = false;
@@ -715,8 +712,7 @@ document.addEventListener("DOMContentLoaded", () => {
             const data = await getData("/api/rules");
             let html = "";
             data.rules.forEach(rule => {
-                html += `
-                    <div class="rule-card">
+                html += `<div class="rule-card">
                         <h3>${rule.suffix}</h3>
                         <div class="rule-badge">${rule.rule}</div>
                         <p>${rule.desc}</p>
@@ -896,6 +892,121 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     });
 
+    const posLabels = {
+        'NOUN': 'Существительное',
+        'ADJF': 'Прилагательное',
+        'VERB': 'Глагол',
+        'INFN': 'Инфинитив',
+        'PRTF': 'Причастие',
+        'GRND': 'Деепричастие',
+        'ADVB': 'Наречие',
+        'ADJS': 'Краткое прил.',
+        'PRTS': 'Краткое прич.',
+        'COMP': 'Компаратив',
+        'NUMR': 'Числительное',
+        'any': 'Все'
+    };
+
+    // Global export functions
+    window._downloadFile = (filename, lines) => {
+        const blob = new Blob([lines.join('\n')], { type: 'text/plain' });
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        a.click();
+        window.URL.revokeObjectURL(url);
+    };
+
+    window._downloadExport = async (uncoveredOnly = false) => {
+        if (!window._currentMsrchParams) return;
+        const btnId = uncoveredOnly ? 'btn-download-uncovered' : 'btn-download-all';
+        const btn = document.getElementById(btnId);
+        const originalText = btn.textContent;
+        btn.textContent = '⌛ ...';
+        btn.disabled = true;
+
+        try {
+            const resp = await fetch('/api/ending_export', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ ...window._currentMsrchParams, uncovered_only: uncoveredOnly })
+            });
+            if (resp.ok) {
+                const blob = await resp.blob();
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `${uncoveredOnly ? 'uncovered' : 'export'}_${window._currentMsrchParams.ending || 'words'}.txt`;
+                a.click();
+                window.URL.revokeObjectURL(url);
+            } else {
+                alert('Ошибка экспорта');
+            }
+        } catch (err) {
+            console.error(err);
+            alert('Ошибка сети');
+        } finally {
+            btn.textContent = originalText;
+            btn.disabled = false;
+        }
+    };
+
+    // Registry pagination helper
+    window._registryPage = (page) => {
+        const input = document.getElementById('msrch-input');
+        input.value = '*';
+        // Store page and trigger search
+        window._registryRequestedPage = page;
+        document.getElementById('btn-run-msrch').click();
+    };
+
+    // Registry download helper
+    window._downloadRegistry = async (which) => {
+        const mtype = window._currentRegistryType || 'root';
+        const currentSource = window._currentRegistrySource || 'tikhonov';
+        // Determine which source to download
+        let source;
+        if (which === 'other') {
+            source = currentSource === 'tikhonov' ? 'opencorpora' : 'tikhonov';
+        } else {
+            source = currentSource;
+        }
+        try {
+            let data;
+            if (source === 'opencorpora') {
+                data = await postData('/api/ending_search', {
+                    ending: '*', search_type: mtype, pos: 'ANY',
+                    page: 1, page_size: 0
+                });
+            } else {
+                data = await postData('/api/morpheme_search', {
+                    morpheme: '*', morpheme_type: mtype,
+                    page: 1, page_size: 0
+                });
+            }
+            if (data && data.results) {
+                const items = Array.isArray(data.results) ? data.results : [];
+                const exportData = items.map(m => ({
+                    morpheme: typeof m === 'object' ? m.value : m,
+                    example: typeof m === 'object' ? (m.example || '') : ''
+                }));
+                const json = JSON.stringify(exportData, null, 2);
+                const blob = new Blob([json], {type: 'application/json'});
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `registry_${mtype}_${source}.json`;
+                a.click();
+                URL.revokeObjectURL(url);
+            }
+        } catch (e) {
+            console.error(e);
+            alert('Ошибка скачивания');
+        }
+    };
+
+    // --- Theme Switcher ---
     // -----------------------------------------------------------------------
     // Morpheme Search (reverse lookup)
     // -----------------------------------------------------------------------
@@ -906,6 +1017,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const msrchFilterRow = document.getElementById('msrch-filter-row');
     const msrchWordFilter = document.getElementById('msrch-word-filter');
     let activeMsrchType = 'any';
+    let currentMsrchPage = 1;
 
     const TYPE_LABELS = {
         prefix: 'приставка',
@@ -933,23 +1045,229 @@ document.addEventListener("DOMContentLoaded", () => {
     // Source toggle (independent from type)
     const btnSrcTikhonov = document.getElementById('btn-src-tikhonov');
     const btnSrcOpenCorpora = document.getElementById('btn-src-opencorpora');
+    const btnSrcAlgorithmic = document.getElementById('btn-src-algorithmic');
     let useOpenCorpora = false;
+    let useAlgorithmic = false;
 
     const posFilterGroup = document.getElementById('pos-filter-group');
     let activeEndPos = 'any';
 
-    btnSrcTikhonov.addEventListener('click', () => {
-        btnSrcTikhonov.classList.add('active');
+    function _deactivateAllSrc() {
+        btnSrcTikhonov.classList.remove('active');
         btnSrcOpenCorpora.classList.remove('active');
+        btnSrcAlgorithmic.classList.remove('active');
+    }
+
+    btnSrcTikhonov.addEventListener('click', () => {
+        _deactivateAllSrc();
+        btnSrcTikhonov.classList.add('active');
         useOpenCorpora = false;
+        useAlgorithmic = false;
         posFilterGroup.style.display = 'none';
+        _runMsrchSearch(msrchInput.value.trim(), msrchWordFilter.value.trim(), 1);
     });
     btnSrcOpenCorpora.addEventListener('click', () => {
+        _deactivateAllSrc();
         btnSrcOpenCorpora.classList.add('active');
-        btnSrcTikhonov.classList.remove('active');
         useOpenCorpora = true;
+        useAlgorithmic = false;
         posFilterGroup.style.display = 'block';
+        _runMsrchSearch(msrchInput.value.trim(), msrchWordFilter.value.trim(), 1);
     });
+    btnSrcAlgorithmic.addEventListener('click', () => {
+        _deactivateAllSrc();
+        btnSrcAlgorithmic.classList.add('active');
+        useOpenCorpora = false;
+        useAlgorithmic = true;
+        posFilterGroup.style.display = 'none';
+        _loadAlgorithmic(1);
+    });
+
+    // Global helper: go back to registry (respects active source)
+    window._goBackToRegistry = function() {
+        document.getElementById('msrch-input').value = '*';
+        if (useAlgorithmic) {
+            _loadAlgorithmic(1);
+        } else {
+            document.getElementById('btn-run-msrch').click();
+        }
+    };
+
+    // Algorithmic decomposition viewer
+    async function _loadAlgorithmic(page = 1) {
+        msrchResultBox.innerHTML = '<div class="empty-state">Загрузка...</div>';
+        document.getElementById('msrch-actions-bar').style.display = 'none';
+        try {
+            // If specific type selected → show registry (like Tikhonov)
+            if (activeMsrchType !== 'any') {
+                const data = await postData('/api/algorithmic_registry', {
+                    morpheme_type: activeMsrchType,
+                    page: 1,
+                    page_size: 5000
+                });
+                if (!data || !data.results || data.results.length === 0) {
+                    msrchResultBox.innerHTML = '<div class="empty-state">Нет данных</div>';
+                    msrchHeader.textContent = 'OpenCorpora — пусто';
+                    return;
+                }
+                const label = data.type === 'PREFIX' ? 'приставки' : data.type === 'SUFFIX' ? 'суффиксы' : data.type === 'ROOT' ? 'корни' : data.type === 'ENDING' ? 'окончания' : data.type;
+                msrchHeader.innerHTML = `<div class="msrch-results-header">
+                    <span style="color:var(--text-secondary)">OpenCorpora</span>
+                    <span style="color:var(--text-secondary)">/</span>
+                    <span style="font-weight:700">${label}</span>
+                    <span style="font-size:0.85rem; color:var(--text-secondary); margin-left:auto;">${data.total.toLocaleString('ru-RU')} ед.</span>
+                </div>`;
+
+                const actionsBar = document.getElementById('msrch-actions-bar');
+                actionsBar.innerHTML = `<div style="margin:4px 0;display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+                    <button onclick="_downloadAlgoRegistry()" style="background:rgba(34,197,94,0.7);border:none;color:#fff;padding:4px 12px;border-radius:6px;cursor:pointer;font-size:0.8rem;">⬇ OpenCorpora (${data.total.toLocaleString('ru-RU')})</button>
+                </div>`;
+                actionsBar.style.display = 'block';
+
+                let uHtml = '<div class="msrch-registry-grid">';
+                data.results.forEach(m => {
+                    const mVal = typeof m === 'object' ? m.value : m;
+                    const mCount = typeof m === 'object' ? m.count : 0;
+                    uHtml += `<div class="msrch-registry-item" style="border-left-color:#22c55e;" onclick="document.getElementById('msrch-input').value='${mVal}'; document.getElementById('btn-run-msrch').click();">
+                        <span class="msrch-registry-val">${mVal}</span>
+                        <span class="msrch-registry-count">${mCount.toLocaleString('ru-RU')}</span>
+                    </div>`;
+                });
+                uHtml += '</div>';
+                msrchResultBox.innerHTML = uHtml;
+                return;
+            }
+
+            // 'any' mode → show word list with decomposition
+            const data = await postData('/api/algorithmic_words', {
+                morpheme_type: 'any',
+                page: page,
+                page_size: 200
+            });
+            if (!data || !data.results || data.results.length === 0) {
+                msrchResultBox.innerHTML = '<div class="empty-state">Нет данных</div>';
+                msrchHeader.textContent = 'OpenCorpora — пусто';
+                return;
+            }
+            const pg = data.pagination;
+            msrchHeader.innerHTML = `<div class="msrch-results-header">
+                <span style="color:var(--text-secondary)">OpenCorpora</span>
+                <span style="color:var(--text-secondary)">/</span>
+                <span style="font-weight:700">Все разобранные</span>
+                <span style="font-size:0.85rem;color:var(--text-secondary);margin-left:auto;">${data.total.toLocaleString('ru-RU')} слов</span>
+            </div>
+            <div style="display:flex;gap:10px;align-items:center;font-size:0.75rem;margin:4px 0;flex-wrap:wrap;">
+                <span><span style="color:#60a5fa;font-weight:700">■</span> приставка</span>
+                <span><span style="color:#f87171;font-weight:700">■</span> корень</span>
+                <span><span style="color:#4ade80;font-weight:700">■</span> суффикс</span>
+                <span><span style="color:#fbbf24;font-weight:700">■</span> окончание</span>
+                <span><span style="color:#94a3b8;font-weight:700">■</span> интерфикс</span>
+            </div>`;
+
+            const typeColors = {
+                PREFIX: '#60a5fa', ROOT: '#f87171', SUFFIX: '#4ade80',
+                ENDING: '#fbbf24', LINK: '#94a3b8'
+            };
+
+            let html = '<div style="display:flex;flex-direction:column;gap:3px;">';
+            for (const item of data.results) {
+                let morphHtml = '';
+                for (const m of item.morphemes) {
+                    const c = typeColors[m.type] || '#888';
+                    morphHtml += `<span style="color:${c};font-weight:600;border-bottom:2px solid ${c};padding:0 2px;">${m.value}</span>`;
+                    morphHtml += '<span style="color:var(--text-secondary);opacity:0.3">·</span>';
+                }
+                morphHtml = morphHtml.replace(/·<\/span>$/, '</span>');
+                html += `<div style="display:flex;align-items:center;gap:8px;padding:4px 8px;border-radius:6px;background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.04);">
+                    <span style="min-width:140px;font-weight:500;color:var(--text-primary);font-size:0.9rem;">${item.lemma}</span>
+                    <span style="font-size:0.85rem;">${morphHtml}</span>
+                </div>`;
+            }
+            html += '</div>';
+
+            // Download + Pagination controls → actions bar
+            const actionsBar2 = document.getElementById('msrch-actions-bar');
+            let abHtml = `<div style="margin:4px 0;display:flex;gap:6px;align-items:center;flex-wrap:wrap;">`;
+            abHtml += `<button onclick="_downloadAlgorithmic()" style="background:rgba(34,197,94,0.7);border:none;color:#fff;padding:4px 12px;border-radius:6px;cursor:pointer;font-size:0.8rem;">⬇ JSON (${data.total.toLocaleString('ru-RU')})</button>`;
+            if (pg && pg.total_pages > 1) {
+                abHtml += `<span style="margin-left:auto;display:flex;gap:4px;align-items:center;">`;
+                if (pg.page > 1) {
+                    abHtml += `<button onclick="_loadAlgorithmic(${pg.page - 1})" style="background:rgba(255,255,255,0.05);border:1px solid var(--border-color);color:var(--text-primary);padding:4px 10px;border-radius:6px;cursor:pointer;font-size:0.8rem;">← Назад</button>`;
+                }
+                abHtml += `<span style="color:var(--text-secondary);font-size:0.8rem;">${pg.page}/${pg.total_pages}</span>`;
+                if (pg.page < pg.total_pages) {
+                    abHtml += `<button onclick="_loadAlgorithmic(${pg.page + 1})" style="background:rgba(255,255,255,0.05);border:1px solid var(--border-color);color:var(--text-primary);padding:4px 10px;border-radius:6px;cursor:pointer;font-size:0.8rem;">Далее →</button>`;
+                }
+                abHtml += '</span>';
+            }
+            abHtml += '</div>';
+            actionsBar2.innerHTML = abHtml;
+            actionsBar2.style.display = 'block';
+
+            msrchResultBox.innerHTML = html;
+        } catch (e) {
+            console.error(e);
+            msrchResultBox.innerHTML = '<div class="empty-state">Ошибка загрузки</div>';
+        }
+    }
+    window._loadAlgorithmic = _loadAlgorithmic;
+
+    async function _downloadAlgorithmic() {
+        try {
+            const data = await postData('/api/algorithmic_words', {
+                morpheme_type: activeMsrchType,
+                page: 1,
+                page_size: 0
+            });
+            if (data && data.results) {
+                const exportData = data.results.map(item => ({
+                    lemma: item.lemma,
+                    morphemes: item.morphemes.map(m => m.value).join('·'),
+                    decomposition: item.morphemes.map(m => ({[m.type.toLowerCase()]: m.value}))
+                }));
+                const json = JSON.stringify(exportData, null, 2);
+                const blob = new Blob([json], {type: 'application/json'});
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `algorithmic_${activeMsrchType}.json`;
+                a.click();
+                URL.revokeObjectURL(url);
+            }
+        } catch (e) {
+            console.error(e);
+            alert('Ошибка скачивания');
+        }
+    }
+    window._downloadAlgorithmic = _downloadAlgorithmic;
+
+    async function _downloadAlgoRegistry() {
+        try {
+            const data = await postData('/api/algorithmic_registry', {
+                morpheme_type: activeMsrchType,
+                page: 1,
+                page_size: 0
+            });
+            if (data && data.results) {
+                const exportData = data.results.map(m => ({
+                    morpheme: m.value,
+                    example: m.example || ''
+                }));
+                const json = JSON.stringify(exportData, null, 2);
+                const blob = new Blob([json], {type: 'application/json'});
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `algorithmic_${activeMsrchType}_registry.json`;
+                a.click();
+                URL.revokeObjectURL(url);
+            }
+        } catch (e) {
+            console.error(e);
+            alert('Ошибка скачивания');
+        }
+    }
+    window._downloadAlgoRegistry = _downloadAlgoRegistry;
 
     // POS filter buttons
     const endPosBtns = document.querySelectorAll('#pos-filter-group [data-pos]');
@@ -958,6 +1276,27 @@ document.addEventListener("DOMContentLoaded", () => {
             endPosBtns.forEach(b => b.classList.remove('active'));
             btn.classList.add('active');
             activeEndPos = btn.dataset.pos;
+            _runMsrchSearch(msrchInput.value.trim(), msrchWordFilter.value.trim(), 1);
+        });
+    });
+
+    // Morpheme type buttons
+    [msrchBtns.any, msrchBtns.prefix, msrchBtns.suffix, msrchBtns.ending, msrchBtns.root].forEach(btn => {
+        btn.addEventListener('click', () => {
+            msrchInput.value = ''; // Clear input on type switch
+            Object.values(msrchBtns).forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            activeMsrchType = btn.id.replace('btn-msrch-', '');
+            
+            // Clear filter row too
+            msrchWordFilter.value = '';
+            
+            // Automatically trigger registry view (*)
+            if (useAlgorithmic) {
+                _loadAlgorithmic(1);
+            } else {
+                _runMsrchSearch('*', '', 1);
+            }
         });
     });
 
@@ -976,19 +1315,14 @@ document.addEventListener("DOMContentLoaded", () => {
         NPRO: { border: '#64748b', color: '#94a3b8' },
     };
 
-    // Type toggle (prefix/suffix/ending/root)
-    Object.entries(msrchBtns).forEach(([key, btn]) => {
-        btn.addEventListener('click', () => {
-            Object.values(msrchBtns).forEach(b => b.classList.remove('active'));
-            btn.classList.add('active');
-            activeMsrchType = key;
-        });
-    });
+
 
     const chkNoLimit = document.getElementById('chk-no-limit');
 
-    async function _runMsrchSearch(morpheme, wordFilter) {
+    async function _runMsrchSearch(morpheme, wordFilter, page = 1) {
+        currentMsrchPage = page;
         msrchResultBox.innerHTML = '<div class="empty-state">Поиск...</div>';
+        document.getElementById('msrch-actions-bar').style.display = 'none';
 
         const isOpenCorpora = useOpenCorpora;
         const noLimit = chkNoLimit && chkNoLimit.checked;
@@ -996,23 +1330,146 @@ document.addEventListener("DOMContentLoaded", () => {
         try {
             let data;
             if (isOpenCorpora) {
-                const stMap = { any: 'any', prefix: 'prefix', suffix: 'suffix', ending: 'ending', root: 'any' };
+                const stMap = { any: 'any', prefix: 'prefix', suffix: 'suffix', ending: 'ending', root: 'root' };
                 const searchType = stMap[activeMsrchType] || 'ending';
                 const params = {
                     ending: morpheme,
                     pos: activeEndPos,
                     search_type: searchType,
+                    page: currentMsrchPage,
+                    page_size: noLimit ? 0 : 5000
                 };
                 if (wordFilter) params.word_filter = wordFilter;
-                if (noLimit) params.limit = 0;
                 data = await postData('/api/ending_search', params);
             } else {
-                data = await postData('/api/morpheme_search', { morpheme, morpheme_type: activeMsrchType });
+                data = await postData('/api/morpheme_search', { morpheme, morpheme_type: activeMsrchType, page: currentMsrchPage, page_size: 5000 });
             }
 
             if (data.total === 0) {
                 msrchResultBox.innerHTML = `<div class="empty-state">«${morpheme}» не найдено</div>`;
                 msrchHeader.textContent = 'Ничего не найдено';
+                return;
+            }
+
+            if (data.only_unique) {
+                const label = data.type === 'PREFIX' ? 'приставки' : data.type === 'SUFFIX' ? 'суффиксы' : data.type === 'ROOT' ? 'корни' : data.type === 'ENDING' ? 'окончания' : data.type;
+                const sourceLabel = isOpenCorpora ? 'OpenCorpora' : 'Тихонов';
+                
+                // Fetch opposite source for diff (only for prefix/suffix/ending, skip root — too large)
+                let otherSet = null;
+                const diffTypes = ['prefix', 'suffix', 'ending'];
+                if (diffTypes.includes(activeMsrchType)) {
+                    try {
+                        let otherData;
+                        if (isOpenCorpora) {
+                            otherData = await postData('/api/morpheme_search', { morpheme: '*', morpheme_type: activeMsrchType, page: 1, page_size: 0 });
+                        } else {
+                            otherData = await postData('/api/ending_search', { ending: '*', search_type: activeMsrchType, pos: 'ANY', page: 1, page_size: 0 });
+                        }
+                        if (otherData && otherData.results) {
+                            const items = Array.isArray(otherData.results) ? otherData.results : [];
+                            otherSet = new Set(items.map(m => typeof m === 'object' ? m.value : m));
+                        }
+                    } catch(e) { /* ignore diff errors */ }
+                }
+                
+                // Count diff
+                let diffCount = 0;
+                let bothCount = 0;
+                if (otherSet) {
+                    data.results.forEach(m => {
+                        const val = typeof m === 'object' ? m.value : m;
+                        if (otherSet.has(val)) bothCount++;
+                        else diffCount++;
+                    });
+                }
+                
+                // Pagination info
+                let pgInfo = '';
+                const pg = data.pagination;
+                if (pg && pg.total_pages > 1) {
+                    const startIdx = (pg.page - 1) * pg.page_size + 1;
+                    const endIdx = startIdx + pg.shown - 1;
+                    pgInfo = ` · <span style="color:#94a3b8;font-size:0.8rem;">стр. ${pg.page} из ${pg.total_pages} (${startIdx.toLocaleString('ru-RU')}–${endIdx.toLocaleString('ru-RU')})</span>`;
+                }
+                
+                const otherLabel = isOpenCorpora ? 'Тихонов' : 'OpenCorpora';
+                let diffLegend = '';
+                if (otherSet) {
+                    diffLegend = `<div style="display:flex;gap:12px;align-items:center;font-size:0.8rem;margin:6px 0;flex-wrap:wrap;">
+                        <span style="display:flex;align-items:center;gap:4px;"><span style="width:10px;height:10px;border-radius:2px;background:#9a59f6;display:inline-block;"></span> в обоих (${bothCount})</span>
+                        <span style="display:flex;align-items:center;gap:4px;"><span style="width:10px;height:10px;border-radius:2px;background:#f59e0b;display:inline-block;"></span> только ${sourceLabel} (${diffCount})</span>
+                    </div>`;
+                }
+                
+                msrchHeader.innerHTML = `<div class="msrch-results-header">
+                    <span style="color:var(--text-secondary)">Реестр</span>
+                    <span style="color:var(--text-secondary)">/</span>
+                    <span style="font-weight:700">${label}</span>
+                    <span style="font-size:0.85rem; color:var(--text-secondary); margin-left:auto;">${data.total.toLocaleString('ru-RU')} ед.</span>
+                    ${pgInfo}
+                </div>${diffLegend}`;
+                
+                // Download + pagination controls → actions bar
+                const otherCount = otherSet ? otherSet.size : 0;
+                let controlsHtml = `<div style="margin:4px 0;display:flex;gap:6px;align-items:center;flex-wrap:wrap">`;
+                controlsHtml += `<button onclick="_downloadRegistry('current')" style="background:rgba(99,102,241,0.7);border:none;color:#fff;padding:4px 12px;border-radius:6px;cursor:pointer;font-size:0.8rem;">⬇ ${sourceLabel} (${data.total.toLocaleString('ru-RU')})</button>`;
+                if (otherSet) {
+                    controlsHtml += `<button onclick="_downloadRegistry('other')" style="background:rgba(245,158,11,0.7);border:none;color:#fff;padding:4px 12px;border-radius:6px;cursor:pointer;font-size:0.8rem;">⬇ ${otherLabel} (${otherCount.toLocaleString('ru-RU')})</button>`;
+                }
+                
+                if (pg && pg.total_pages > 1) {
+                    controlsHtml += `<span style="margin-left:auto;display:flex;gap:4px;align-items:center;">`;
+                    if (pg.page > 1) {
+                        controlsHtml += `<button onclick="_registryPage(${pg.page - 1})" style="background:rgba(255,255,255,0.05);border:1px solid var(--border-color);color:var(--text-primary);padding:4px 10px;border-radius:6px;cursor:pointer;font-size:0.8rem;">← Назад</button>`;
+                    }
+                    controlsHtml += `<span style="color:var(--text-secondary);font-size:0.8rem;">${pg.page}/${pg.total_pages}</span>`;
+                    if (pg.page < pg.total_pages) {
+                        controlsHtml += `<button onclick="_registryPage(${pg.page + 1})" style="background:rgba(255,255,255,0.05);border:1px solid var(--border-color);color:var(--text-primary);padding:4px 10px;border-radius:6px;cursor:pointer;font-size:0.8rem;">Далее →</button>`;
+                    }
+                    controlsHtml += `</span>`;
+                }
+                controlsHtml += `</div>`;
+                
+                const regActionsBar = document.getElementById('msrch-actions-bar');
+                regActionsBar.innerHTML = controlsHtml;
+                regActionsBar.style.display = 'block';
+
+                let uHtml = `<div class="msrch-registry-grid">`;
+                data.results.forEach(m => {
+                    const mVal = typeof m === 'object' ? m.value : m;
+                    const mCount = typeof m === 'object' ? m.count : 0;
+                    const isUnique = otherSet && !otherSet.has(mVal);
+                    const borderColor = isUnique ? '#f59e0b' : '#9a59f6';
+                    const bgColor = isUnique ? 'rgba(245,158,11,0.08)' : '';
+                    
+                    uHtml += `<div class="msrch-registry-item" style="border-left-color:${borderColor};${bgColor ? 'background:' + bgColor + ';' : ''}" onclick="document.getElementById('msrch-input').value='${mVal}'; document.getElementById('btn-run-msrch').click();">
+                        <span class="msrch-registry-val">${mVal}</span>
+                        <span class="msrch-registry-count">${mCount.toLocaleString('ru-RU')}</span>
+                    </div>`;
+                });
+                uHtml += `</div>`;
+                
+                // Bottom pagination
+                if (pg && pg.total_pages > 1) {
+                    uHtml += `<div style="margin:12px 0;display:flex;gap:6px;justify-content:center;align-items:center;">`;
+                    if (pg.page > 1) {
+                        uHtml += `<button onclick="_registryPage(${pg.page - 1})" style="background:rgba(255,255,255,0.05);border:1px solid var(--border-color);color:var(--text-primary);padding:4px 10px;border-radius:6px;cursor:pointer;font-size:0.8rem;">← Назад</button>`;
+                    }
+                    uHtml += `<span style="color:var(--text-secondary);font-size:0.8rem;">${pg.page}/${pg.total_pages}</span>`;
+                    if (pg.page < pg.total_pages) {
+                        uHtml += `<button onclick="_registryPage(${pg.page + 1})" style="background:rgba(255,255,255,0.05);border:1px solid var(--border-color);color:var(--text-primary);padding:4px 10px;border-radius:6px;cursor:pointer;font-size:0.8rem;">Далее →</button>`;
+                    }
+                    uHtml += `</div>`;
+                }
+                
+                msrchResultBox.innerHTML = uHtml;
+                msrchResultBox.classList.remove('empty');
+                msrchFilterRow.style.display = 'none';
+                
+                // Store registry context for download/pagination
+                window._currentRegistryType = activeMsrchType;
+                window._currentRegistrySource = isOpenCorpora ? 'opencorpora' : 'tikhonov';
                 return;
             }
 
@@ -1026,41 +1483,144 @@ document.addEventListener("DOMContentLoaded", () => {
                 modeLabel = 'Слова с';
             }
 
-            // Coverage stats
-            const cov = data.coverage || {};
-            const covPct = cov.pct || 0;
-            const covDecomp = cov.decomposed || 0;
-            const covTotal = cov.total_shown || 0;
-            const covColor = covPct >= 80 ? '#10b981' : covPct >= 50 ? '#eab308' : '#f43f5e';
-            const covText = covTotal > 0 ? ` · Покрытие: ${covDecomp}/${covTotal} (${covPct}%)` : '';
+            // Coverage stats (global for OpenCorpora if total < 20k)
+            const currentTotalWords = data.total || 0;
+            const totalUncovered = data.uncovered_only_total; // -1 if not calculated (too many)
+            let covText = '';
+            let covColor = '#94a3b8';
+            
+            if (totalUncovered !== undefined && totalUncovered !== -1 && totalUncovered <= currentTotalWords) {
+                const totalDecomp = currentTotalWords - totalUncovered;
+                const totalPct = currentTotalWords > 0 ? Math.round(100 * totalDecomp / currentTotalWords) : 0;
+                covColor = totalPct >= 80 ? '#10b981' : totalPct >= 50 ? '#eab308' : '#f43f5e';
+                covText = ` · Покрытие: ${totalDecomp.toLocaleString('ru-RU')}/${currentTotalWords.toLocaleString('ru-RU')} (${totalPct}%)`;
+            } else if (currentTotalWords > 0) {
+                covText = ` · Всего: ${currentTotalWords.toLocaleString('ru-RU')} слов`;
+            }
 
             const allWords = [];
             for (const words of Object.values(data.results)) { allWords.push(...words); }
-            const shownNote = (allWords.length < data.total) ? ` · <span style="color:#94a3b8;font-size:0.8em">показано ${allWords.length.toLocaleString('ru-RU')} из ${data.total.toLocaleString('ru-RU')}</span>` : '';
+            
+            // Pagination info in header
+            let pgInfo = '';
+            const pg = data.pagination;
+            if (pg && pg.total_pages > 1) {
+                const startIdx = (pg.page - 1) * pg.page_size + 1;
+                const endIdx = startIdx + pg.shown - 1;
+                pgInfo = ` · <span style="color:#94a3b8;font-size:0.8em">стр. ${pg.page} из ${pg.total_pages} (слова ${startIdx.toLocaleString('ru-RU')}–${endIdx.toLocaleString('ru-RU')})</span>`;
+            } else {
+                const shownNote = (allWords.length < data.total) ? ` · <span style="color:#94a3b8;font-size:0.8em">показано ${allWords.length.toLocaleString('ru-RU')} из ${data.total.toLocaleString('ru-RU')}</span>` : '';
+                pgInfo = shownNote;
+            }
 
-            msrchHeader.innerHTML = `${modeLabel} «${morpheme || '*'}» — ${data.total.toLocaleString('ru-RU')} (${sourceLabel})<span style="color:${covColor};font-size:0.85em">${covText}</span>${shownNote}`;
+            const isRegistryBack = (morpheme && morpheme !== '*' && activeMsrchType !== 'any');
+            const label = activeMsrchType === 'prefix' ? 'приставки' : activeMsrchType === 'suffix' ? 'суффиксы' : 'корни';
+            
+            let headerHtml = `<div class="msrch-results-header">`;
+            if (isRegistryBack) {
+                headerHtml += `
+                    <button onclick="_goBackToRegistry()" class="msrch-back-btn">←</button>
+                    <div style="display: flex; align-items: center; gap: 6px; font-size: 0.9rem;">
+                        <span style="color:var(--text-secondary); opacity: 0.7;">Реестр</span>
+                        <span style="color:var(--text-secondary); opacity: 0.5;">/</span>
+                        <span style="color:var(--text-secondary); cursor:pointer; opacity: 0.8;" onclick="_goBackToRegistry()">${label}</span>
+                        <span style="color:var(--text-secondary); opacity: 0.5;">/</span>
+                        <span style="font-weight:700; color: var(--text-primary);">«${morpheme}»</span>
+                    </div>
+                `;
+            } else {
+                headerHtml += `<span style="font-weight:700; font-size: 1.1rem; color: var(--text-primary);">${modeLabel} «${morpheme || '*'}»</span>`;
+            }
+            headerHtml += `<span style="color:var(--text-secondary); margin-left:12px; font-weight: 500;">— ${data.total.toLocaleString('ru-RU')}</span>`;
+            headerHtml += `<span style="color:${covColor}; font-size:0.85rem; margin-left:12px; background: rgba(255,255,255,0.03); padding: 2px 10px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.05);">${covText}</span>`;
+            headerHtml += pgInfo;
+            headerHtml += `</div>`;
 
-            // Download buttons
-            const uncovered = data.uncovered || [];
+            msrchHeader.innerHTML = headerHtml;
 
-            const _downloadFile = (filename, lines) => {
-                const blob = new Blob([lines.join('\n')], {type: 'text/plain;charset=utf-8'});
-                const a = document.createElement('a');
-                a.href = URL.createObjectURL(blob);
-                a.download = filename;
-                a.click();
-                URL.revokeObjectURL(a.href);
+            // Store params for export
+            window._currentMsrchParams = {
+                ending: morpheme,
+                pos: activeEndPos,
+                search_type: activeMsrchType,
+                word_filter: wordFilter,
+                search_source: isOpenCorpora ? 'opencorpora' : 'tikhonov'
             };
 
-            let dlHtml = `<div style="margin:8px 0;display:flex;gap:6px;align-items:center;flex-wrap:wrap">` +
-                `<button id="dl-all-btn" style="background:rgba(99,102,241,0.7);border:none;color:#fff;padding:4px 12px;border-radius:6px;cursor:pointer;font-size:0.8em">⬇ Все (${allWords.length})</button>`;
-            if (uncovered.length > 0) {
-                dlHtml += `<button id="dl-uncov-btn" style="background:rgba(244,63,94,0.7);border:none;color:#fff;padding:4px 12px;border-radius:6px;cursor:pointer;font-size:0.8em">⬇ Непокрытые (${uncovered.length})</button>`;
-            }
-            dlHtml += `</div>`;
+            const uncLabel = (totalUncovered !== undefined && totalUncovered !== -1) ? totalUncovered.toLocaleString('ru-RU') : '...';
 
-            const posLabels = data.pos_labels || {};
-            let html = dlHtml;
+            const actionsBar = document.getElementById('msrch-actions-bar');
+            actionsBar.innerHTML = `<div style="margin:4px 0;display:flex;gap:6px;align-items:center;flex-wrap:wrap">` +
+                `<button id="btn-download-all" onclick="_downloadExport(false)" style="background:rgba(99,102,241,0.7);border:none;color:#fff;padding:4px 12px;border-radius:6px;cursor:pointer;font-size:0.8em">⬇ Все (${currentTotalWords.toLocaleString('ru-RU')})</button>` +
+                `<button id="btn-download-uncovered" onclick="_downloadExport(true)" style="background:rgba(244,63,94,0.7);border:none;color:#fff;padding:4px 12px;border-radius:6px;cursor:pointer;font-size:0.8em">⬇ Непокрытые (${uncLabel})</button>` +
+                `</div>`;
+            actionsBar.style.display = 'block';
+
+            let html = '';
+
+            // Top pagination
+            let pgHtml = '';
+            if (pg && pg.total_pages > 1) {
+                pgHtml = `<div class="pagination-controls" style="margin: 15px 0; display: flex; gap: 6px; justify-content: center; align-items: center; flex-wrap: wrap;">`;
+                if (pg.page > 1) pgHtml += `<button class="pg-btn" data-page="${pg.page - 1}" style="background: var(--bg-secondary); border: 1px solid var(--border-color); color: var(--text-primary); padding: 5px 12px; border-radius: 6px; cursor: pointer; font-size: 0.85em;">←</button>`;
+                const start = Math.max(1, pg.page - 3);
+                const end = Math.min(pg.total_pages, pg.page + 3);
+                if (start > 1) {
+                    pgHtml += `<button class="pg-btn" data-page="1" style="background: var(--bg-secondary); border: 1px solid var(--border-color); color: var(--text-primary); padding: 5px 12px; border-radius: 6px; cursor: pointer; font-size: 0.85em;">1</button>`;
+                    if (start > 2) pgHtml += `<span style="color: var(--text-secondary)">...</span>`;
+                }
+                for (let i = start; i <= end; i++) {
+                    const isActive = i === pg.page;
+                    const style = isActive ? `background: var(--primary-color); color: #fff; border: 1px solid var(--primary-color);` : `background: var(--bg-secondary); border: 1px solid var(--border-color); color: var(--text-primary);`;
+                    pgHtml += `<button class="pg-btn" data-page="${i}" style="${style} padding: 5px 12px; border-radius: 6px; cursor: pointer; font-size: 0.85em;">${i}</button>`;
+                }
+                if (end < pg.total_pages) {
+                    if (end < pg.total_pages - 1) pgHtml += `<span style="color: var(--text-secondary)">...</span>`;
+                    pgHtml += `<button class="pg-btn" data-page="${pg.total_pages}" style="background: var(--bg-secondary); border: 1px solid var(--border-color); color: var(--text-primary); padding: 5px 12px; border-radius: 6px; cursor: pointer; font-size: 0.85em;">${pg.total_pages}</button>`;
+                }
+                if (pg.page < pg.total_pages) pgHtml += `<button class="pg-btn" data-page="${pg.page + 1}" style="background: var(--bg-secondary); border: 1px solid var(--border-color); color: var(--text-primary); padding: 5px 12px; border-radius: 6px; cursor: pointer; font-size: 0.85em;">→</button>`;
+                pgHtml += `</div>`;
+                html += pgHtml;
+            }
+
+            // Morpheme stats summary
+            if (data.morpheme_stats) {
+                const stats = data.morpheme_stats;
+                const m_type_map = { prefix: 'PREFIX', suffix: 'SUFFIX', root: 'ROOT', any: 'PREFIX' };
+                const t = m_type_map[activeMsrchType] || 'PREFIX';
+                
+                // For root search: show companion roots (second roots in compound words)
+                if (activeMsrchType === 'root' && stats['COMPANION_ROOT']) {
+                    const compList = Object.entries(stats['COMPANION_ROOT']).sort((a, b) => b[1] - a[1]);
+                    if (compList.length > 0) {
+                        html += `<div class="msrch-summary-box">`;
+                        html += `<div class="msrch-summary-title">Корни-спутники (в составных словах):</div>`;
+                        html += `<div class="msrch-registry-grid" style="padding:0">`;
+                        compList.slice(0, 80).forEach(([val, count]) => {
+                            html += `<div class="msrch-registry-item" onclick="document.getElementById('msrch-word-filter').value='${val}'; document.getElementById('msrch-word-filter').dispatchEvent(new Event('input'))">` +
+                                    `<span class="msrch-registry-val" style="font-size:0.85rem">${val}</span>` +
+                                    `<span class="msrch-registry-count">${count.toLocaleString('ru-RU')}</span>` +
+                                    `</div>`;
+                        });
+                        html += `</div></div>`;
+                    }
+                } else if (stats[t]) {
+                    const mList = Object.entries(stats[t]).sort((a, b) => b[1] - a[1]);
+                    if (mList.length > 0) {
+                        html += `<div class="msrch-summary-box">`;
+                        const label = t === 'PREFIX' ? 'приставки' : t === 'SUFFIX' ? 'суффиксы' : 'корни';
+                        html += `<div class="msrch-summary-title">Обнаруженные ${label}:</div>`;
+                        html += `<div class="msrch-registry-grid" style="padding:0">`;
+                        mList.slice(0, 120).forEach(([val, count]) => {
+                            html += `<div class="msrch-registry-item" onclick="document.getElementById('msrch-word-filter').value='${val}'; document.getElementById('msrch-word-filter').dispatchEvent(new Event('input'))">` +
+                                    `<span class="msrch-registry-val" style="font-size:0.85rem">${val}</span>` +
+                                    `<span class="msrch-registry-count">${count.toLocaleString('ru-RU')}</span>` +
+                                    `</div>`;
+                        });
+                        html += `</div></div>`;
+                    }
+                }
+            }
 
             for (const [type, words] of Object.entries(data.results)) {
                 let color, border, label;
@@ -1076,42 +1636,86 @@ document.addEventListener("DOMContentLoaded", () => {
                     label = 'Как ' + (TYPE_LABELS[type] || type);
                 }
                 const sorted = [...words].sort((a, b) => a.localeCompare(b, 'ru'));
-                html += `<div data-pos-group="${type}" style="margin-bottom: 20px;">
-                    <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 10px;">
-                        <span style="font-size: 0.8rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: ${color};">${label}</span>
-                        <span class="pos-group-count" style="font-size: 0.75rem; color: var(--text-secondary);">(${words.length})</span>
+                html += `<div data-pos-group="${type}" class="pos-group">
+                    <div class="pos-group-header">
+                        <span class="pos-group-label" style="color: ${color};">${label}</span>
+                        <span class="pos-group-count">${words.length.toLocaleString('ru-RU')}</span>
                     </div>
-                    <div style="columns: 3; column-gap: 16px;">`;
+                    <div class="msrch-word-list">`;
                 const mLower = morpheme.toLowerCase();
                 const decomp = data.decomp || {};
-                const MORPH_COLORS = {
-                    PREFIX: '#818cf8',
-                    ROOT: '#f87171',
-                    SUFFIX: '#34d399',
-                    ENDING: '#fbbf24',
-                    LINK: '#f472b6'
+                // Map search type to DB mtype for highlighting
+                const HIGHLIGHT_TYPE_MAP = {
+                    'suffix': 'SUFFIX', 'prefix': 'PREFIX', 'root': 'ROOT',
+                    'ending': 'ENDING', 'compound_root': 'ROOT'
                 };
-                sorted.forEach(w => {
-                    let display;
-                    const parts = decomp[w];
-                    if (parts && parts.length > 0) {
-                        display = parts.map(([t, v]) => {
-                            const mc = MORPH_COLORS[t] || 'var(--text-primary)';
-                            return `<span style="color: ${mc}; font-weight: ${t === 'ROOT' ? '700' : '500'};" title="${t}">${v}</span>`;
-                        }).join('');
-                    } else if (w.toLowerCase().endsWith(mLower)) {
-                        const stem = w.slice(0, w.length - mLower.length);
-                        display = `${stem}<span style="color: ${color}; font-weight: 600;">${w.slice(w.length - mLower.length)}</span>`;
-                    } else {
-                        display = w;
-                    }
-                    html += `<div class="msrch-word-item" data-word="${w.toLowerCase()}" style="break-inside: avoid; padding: 3px 0 3px 10px; margin-bottom: 2px; font-size: 0.85rem; color: var(--text-primary); border-left: 2px solid ${border};">${display}</div>`;
-                });
+                // For OpenCorpora, `type` is POS (Существительное etc), not morpheme type
+                // Use activeMsrchType which is the actual search tab (root/suffix/prefix/ending)
+                const highlightMtype = HIGHLIGHT_TYPE_MAP[activeMsrchType] || HIGHLIGHT_TYPE_MAP[type] || '';
+                    sorted.forEach(w => {
+                        let display;
+                        // Handle reflexive grouping: впускать(ся) → decompose 'впускать', show '(ся)' suffix
+                        let baseWord = w;
+                        let reflexiveSuffix = '';
+                        if (w.endsWith('(ся)')) {
+                            baseWord = w.slice(0, -4);
+                            reflexiveSuffix = '<span style="color:var(--text-secondary);font-weight:400">(ся)</span>';
+                        }
+                        const parts = decomp[baseWord] || decomp[w];
+                        if (parts && parts.length > 0) {
+                            // Only underline the part matching the active search type + morpheme value
+                            display = parts.map(([t, v]) => {
+                                // For ROOT: partial match (root forms vary: добыв/добыва)
+                                // For others: exact match
+                                const vLow = v.toLowerCase();
+                                const isMatch = t === highlightMtype && (
+                                    vLow === mLower || vLow.includes(mLower) || mLower.includes(vLow)
+                                );
+                                if (isMatch) {
+                                    return `<span style="color: ${color}; font-weight: 700; text-decoration: underline; text-decoration-color: ${color}; text-underline-offset: 3px;" title="${t}">${v}</span>`;
+                                }
+                                return `<span title="${t}">${v}</span>`;
+                            }).join('') + reflexiveSuffix;
+                        } else if (baseWord.toLowerCase().includes(mLower)) {
+                            // Fallback: highlight substring
+                            const idx = baseWord.toLowerCase().indexOf(mLower);
+                            if (idx >= 0) {
+                                const before = baseWord.slice(0, idx);
+                                const match = baseWord.slice(idx, idx + mLower.length);
+                                const after = baseWord.slice(idx + mLower.length);
+                                display = `${before}<span style="color: ${color}; font-weight: 700; text-decoration: underline; text-decoration-color: ${color}; text-underline-offset: 3px;">${match}</span>${after}${reflexiveSuffix}`;
+                            } else {
+                                display = w;
+                            }
+                        } else {
+                            display = w;
+                        }
+                        
+                        if (isOpenCorpora) {
+                            html += `<div class="msrch-word-item-premium" data-word="${baseWord.toLowerCase()}" style="border-left: 3px solid ${border};">${display}</div>`;
+                        } else {
+                            html += `<div class="msrch-word-item-classic" data-word="${baseWord.toLowerCase()}" style="border-left-color: ${border};">${display}</div>`;
+                        }
+                    });
                 html += `</div></div>`;
+            }
+
+            // Bottom pagination
+            if (pgHtml) {
+                html += pgHtml.replace('margin: 15px 0', 'margin-top: 30px; padding: 20px 0; border-top: 1px solid var(--border-color)');
             }
 
             msrchResultBox.innerHTML = html;
             msrchResultBox.classList.remove('empty');
+
+            // Attach pagination handlers
+            msrchResultBox.querySelectorAll('.pg-btn').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    const p = parseInt(btn.dataset.page);
+                    _runMsrchSearch(morpheme, wordFilter, p);
+                    msrchResultBox.parentElement.scrollTop = 0; // scroll up result box
+                });
+            });
 
             // Show word filter
             msrchFilterRow.style.display = 'block';
@@ -1128,7 +1732,7 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     }
 
-    btnMsrch.addEventListener('click', () => _runMsrchSearch(msrchInput.value.trim(), ''));
+    btnMsrch.addEventListener('click', () => _runMsrchSearch(msrchInput.value.trim(), '', 1));
     msrchInput.addEventListener('keypress', (e) => { if (e.key === 'Enter') btnMsrch.click(); });
 
     // Word filter — hybrid: client-side for Tikhonov, server-side for OpenCorpora
@@ -1153,8 +1757,8 @@ document.addEventListener("DOMContentLoaded", () => {
             // Server-side filtering (OpenCorpora — debounced re-query)
             clearTimeout(_wordFilterTimer);
             _wordFilterTimer = setTimeout(() => {
-                // Re-trigger search with word_filter
-                _runMsrchSearch(msrchInput.value.trim(), q);
+                // Re-trigger search with word_filter, reset to page 1
+                _runMsrchSearch(msrchInput.value.trim(), q, 1);
             }, 400);
         }
     });
