@@ -288,6 +288,167 @@ def _find_last_entity_by_gender(results, current_idx, target_gender, known_speak
     return None
 
 
+# --- Text Depth Metrics ---
+def compute_depth_metrics(tokens_data: list, window_size: int = 15) -> dict:
+    """Compute text depth metrics across 3 axes + coherence.
+    
+    Axes:
+      1. Lexical richness: TTR × surprisal (log-inverse frequency)
+      2. Semantic dimensionality: effective rank of lemma co-occurrence vectors
+      3. Structural depth: clause nesting (subordinators, participles, relative pronouns)
+    
+    Plus coherence: sliding window Jaccard similarity.
+    
+    Args:
+        tokens_data: list of token dicts from analysis (must have 'word', 'lemma')
+        window_size: size of sliding windows for coherence/semantic analysis
+    
+    Returns:
+        dict with keys: lexical, semantic, structural, coherence, composite, 
+              per_window (list of per-window composite scores)
+    """
+    import math
+    
+    # Extract TEXT-only tokens
+    text_tokens = [t for t in tokens_data 
+                   if t.get('line_type', 'TEXT') == 'TEXT' and t['word'].isalpha()]
+    
+    if len(text_tokens) < 5:
+        return {'lexical': 0.0, 'semantic': 0.0, 'structural': 0.0,
+                'coherence': 0.0, 'composite': 0.0, 'per_window': []}
+    
+    words = [t['word'].lower() for t in text_tokens]
+    lemmas = []
+    for t in text_tokens:
+        lem = t.get('lemma', t['word'].lower())
+        if not lem:
+            lem = t['word'].lower()
+        lemmas.append(lem)
+    
+    # === Axis 1: Lexical Richness ===
+    n = len(words)
+    n_types = len(set(lemmas))
+    ttr = n_types / n if n > 0 else 0
+    
+    # Surprisal: -log(freq) averaged. Use corpus-relative frequency.
+    freq = {}
+    for w in lemmas:
+        freq[w] = freq.get(w, 0) + 1
+    # Average surprisal: higher = more surprising = richer vocabulary
+    surprisal_vals = [-math.log2(freq[w] / n) for w in lemmas]
+    avg_surprisal = sum(surprisal_vals) / len(surprisal_vals) if surprisal_vals else 0
+    # Normalize surprisal to [0, 1] range (log2(n) is max possible)
+    max_surprisal = math.log2(n) if n > 1 else 1
+    norm_surprisal = min(avg_surprisal / max_surprisal, 1.0) if max_surprisal > 0 else 0
+    
+    lexical = ttr * (0.5 + 0.5 * norm_surprisal)  # TTR weighted by surprisal
+    
+    # Hapax ratio as bonus
+    n_hapax = sum(1 for v in freq.values() if v == 1)
+    hapax_ratio = n_hapax / n_types if n_types > 0 else 0
+    lexical = lexical * (0.7 + 0.3 * hapax_ratio)  # boost for many unique words
+    
+    # === Axis 2: Semantic Dimensionality ===
+    # Approximate PCA rank via lemma co-occurrence diversity
+    # Count how many distinct lemma-pairs co-occur in windows
+    windows = []
+    for i in range(0, len(lemmas), window_size // 2):
+        w = set(lemmas[i:i + window_size])
+        if len(w) >= 3:
+            windows.append(w)
+    
+    if len(windows) >= 2:
+        # Count distinct topics: how many windows have < 50% overlap?
+        distinct_windows = 1
+        for i in range(1, len(windows)):
+            overlap = len(windows[i] & windows[i-1]) / max(len(windows[i] | windows[i-1]), 1)
+            if overlap < 0.5:
+                distinct_windows += 1
+        # Normalize: log scale (1 topic = 0, 8+ topics = 1.0)
+        semantic = min(math.log2(distinct_windows + 1) / 3.0, 1.0)
+    else:
+        semantic = 0.0
+    
+    # === Axis 3: Structural Depth ===
+    # Count subordinating signals: relative pronouns, conjunctions, participles
+    subordinators = {'который', 'которая', 'которое', 'которые', 'которого', 'которой',
+                     'что', 'чтобы', 'если', 'хотя', 'когда', 'потому', 'поскольку',
+                     'пока', 'чем', 'где', 'куда', 'откуда', 'насколько', 'ибо'}
+    
+    n_subordinators = 0
+    n_participles = 0
+    for t in text_tokens:
+        lem = t.get('lemma', t['word'].lower())
+        if lem in subordinators:
+            n_subordinators += 1
+        # Participles and gerunds indicate structural embedding
+        pos = t.get('pos', '')
+        if pos in ('PRTF', 'PRTS', 'GRND'):
+            n_participles += 1
+    
+    # Also: average sentence length variation (complex = varying lengths)
+    sent_lengths = []
+    curr_len = 0
+    for t in tokens_data:
+        if t['word'] in ('.', '!', '?', '…'):
+            if curr_len > 0:
+                sent_lengths.append(curr_len)
+            curr_len = 0
+        elif t['word'].isalpha():
+            curr_len += 1
+    if curr_len > 0:
+        sent_lengths.append(curr_len)
+    
+    if sent_lengths and len(sent_lengths) > 1:
+        avg_len = sum(sent_lengths) / len(sent_lengths)
+        std_len = (sum((x - avg_len)**2 for x in sent_lengths) / len(sent_lengths)) ** 0.5
+        cv = std_len / avg_len if avg_len > 0 else 0  # coefficient of variation
+    else:
+        cv = 0
+    
+    # Structural = subordination density + syntactic variation
+    sub_density = min((n_subordinators + n_participles * 0.5) / max(n, 1) * 10, 1.0)
+    struct_variation = min(cv / 0.8, 1.0)  # CV=0.8 → max complexity
+    structural = sub_density * 0.6 + struct_variation * 0.4
+    
+    # === Coherence ===
+    # Sliding window Jaccard similarity between adjacent windows
+    similarities = []
+    if len(windows) >= 2:
+        for i in range(len(windows) - 1):
+            intersection = len(windows[i] & windows[i+1])
+            union = len(windows[i] | windows[i+1])
+            sim = intersection / union if union > 0 else 0
+            similarities.append(sim)
+        coherence = sum(similarities) / len(similarities)
+    else:
+        coherence = 1.0  # single window = coherent by default
+    
+    # === Composite ===
+    # Multiplicative: all axes must be present for true depth
+    # Add floor of 0.1 to avoid zeroing out the product
+    composite = ((lexical + 0.1) * (semantic + 0.1) * (structural + 0.1) * 
+                 (coherence + 0.1))
+    # Normalize to [0, 1]: max possible = 1.1^4 = 1.4641
+    composite = min(composite / 1.4641, 1.0)
+    
+    # === Per-window depth ===
+    per_window = []
+    for i, win in enumerate(windows):
+        w_ttr = len(win) / window_size if window_size > 0 else 0
+        w_coh = similarities[i] if i < len(similarities) else coherence
+        per_window.append(round(w_ttr * w_coh, 3))
+    
+    return {
+        'lexical': round(lexical, 3),
+        'semantic': round(semantic, 3),
+        'structural': round(structural, 3),
+        'coherence': round(coherence, 3),
+        'composite': round(composite, 3),
+        'per_window': per_window,
+    }
+
+
 # --- Text Structural Segmentation ---
 def segment_text(text: str, tokens: list, entity_map: dict) -> list:
     """Segment text into structural blocks using engine analysis.
@@ -1737,11 +1898,15 @@ async def entropy_map(req: TensionMapRequest):
         except Exception:
             pass
         
+        # Compute depth metrics
+        depth = compute_depth_metrics(results)
+        
         return {
-            "schema_version": 4,
+            "schema_version": 5,
             "status": "success",
             "data": results,
             "stylometry": stylometry_result.to_dict(),
+            "depth": depth,
             "rhythm": sentence_lengths,
             "genre": detect_genre(req.text),
             "dialogue_format": dialogue_format,

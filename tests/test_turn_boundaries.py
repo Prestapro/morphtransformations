@@ -241,8 +241,36 @@ class TestSchemaVersion:
     
     def test_schema_version(self):
         d = _api("Тест.")
-        assert d.get('schema_version') == 4, \
-            f"Expected schema_version=4, got {d.get('schema_version')}"
+        assert d.get('schema_version') == 5, \
+            f"Expected schema_version=5, got {d.get('schema_version')}"
+
+
+class TestDepthMetrics:
+    """Text depth / flatness measurement."""
+    
+    def test_depth_present(self):
+        d = _api("Мой дядя самых честных правил, когда не в шутку занемог.")
+        assert 'depth' in d, "depth field missing from API response"
+        depth = d['depth']
+        for key in ('lexical', 'semantic', 'structural', 'coherence', 'composite'):
+            assert key in depth, f"depth.{key} missing"
+    
+    def test_flat_text_low_depth(self):
+        d = _api("Мама мыла раму. Папа мыл раму. Мама мыла окно.")
+        depth = d['depth']
+        assert depth['composite'] < 0.05, \
+            f"Flat text should have low composite depth, got {depth['composite']}"
+    
+    def test_rich_text_higher_depth(self):
+        text = ("Мой дядя самых честных правил, когда не в шутку занемог, "
+                "он уважать себя заставил и лучше выдумать не мог. "
+                "Его пример другим наука; но, Боже мой, какая скука "
+                "с больным сидеть и день и ночь, не отходя ни шагу прочь!")
+        d = _api(text)
+        depth = d['depth']
+        assert depth['lexical'] > 0.5, f"Pushkin should have high lexical, got {depth['lexical']}"
+        assert depth['composite'] > depth['lexical'] * 0.01, \
+            f"Rich text composite should be meaningful, got {depth['composite']}"
 
 
 if __name__ == '__main__':
