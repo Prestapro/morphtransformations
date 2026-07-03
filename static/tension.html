@@ -915,8 +915,12 @@
                 if (t.s > 0 || t.s < 0) { sSum += t.s; sHits++; }
             }
             if (t.is_operator) ops.push({ kind: t.op_type, word: t.word });
-            if (t.is_entity && t.confidence >= 0.6) actors.add(t.clean);
-            if (t.is_dialogue) hasDial = true;
+            // Skip structural tokens for actor/dialogue: headings and cast lists
+            // should not appear as "turns" on actor tracks
+            const isStructural = t.line_type === 'HEADER' || t.line_type === 'CHARACTERS_LINE' 
+                                 || t.line_type === 'SPEAKER' || t.line_type === 'STAGE_DIRECTION';
+            if (t.is_entity && t.confidence >= 0.6 && !isStructural) actors.add(t.clean);
+            if (t.is_dialogue && !isStructural) hasDial = true;
         });
         c.wordCount = words;
         c.avgEntropy = words ? eSum / words : 0;
