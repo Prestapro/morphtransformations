@@ -101,15 +101,87 @@ def detect_format(text: str) -> TextFormat:
 
 # ── Детекторы строк ──────────────────────────────────────────
 
+_SCENE_HEADING = re.compile(
+    r"^(явление|действие|акт|сцена|картина|часть)\s+",
+    re.IGNORECASE,
+)
+
+_SCENE_HEADING_SOLO = frozenset({
+    "пролог", "эпилог", "интермедия", "антракт",
+})
+
+
+def _is_scene_heading(line: str) -> bool:
+    """Scene/act heading: 'Явление 8', 'Действие второе', 'Пролог'."""
+    s = line.strip().rstrip(".")
+    if _SCENE_HEADING.match(s):
+        return True
+    return s.lower() in _SCENE_HEADING_SOLO
+
+
+def _is_cast_list(line: str, known_speakers: Optional[set] = None) -> bool:
+    """Cast list: comma-separated names, optionally with parenthetical remark.
+    
+    Examples:
+        'София, Лиза, Чацкий, Фамусов.'
+        'Фамусов, Чацкий (смотрит на дверь, в которую София вышла).'
+        'Те же и Скалозуб.'
+    """
+    s = line.strip().rstrip(".")
+    if not s:
+        return False
+    
+    # Strip parenthetical remark at the end
+    paren_start = s.find("(")
+    core = s[:paren_start].strip().rstrip(",") if paren_start > 0 else s
+    
+    # Must have comma or 'и'/'и ' separator
+    if "," not in core and " и " not in core:
+        return False
+    
+    # Split on commas and ' и '
+    parts = re.split(r',\s*|\s+и\s+', core)
+    parts = [p.strip() for p in parts if p.strip()]
+    
+    if len(parts) < 2:
+        return False
+    
+    # Each part should be a capitalized name (1-2 words)
+    cap_count = 0
+    for part in parts:
+        words = part.split()
+        if len(words) > 3:
+            return False
+        if all(w[0].isupper() for w in words if w and w not in ('и', 'те', 'же')):
+            cap_count += 1
+    
+    # At least 2 names must be capitalized
+    if cap_count < 2:
+        return False
+    
+    # If known_speakers provided, at least one must match
+    if known_speakers:
+        if any(p.split()[0] in known_speakers for p in parts 
+               if p.split()):
+            return True
+        return False
+    
+    return True
+
+
 def _is_drama_speaker_candidate(line: str,
                                  known_speakers: Optional[set] = None) -> bool:
     """
     Строка — имя персонажа в пьесе.
     Критерии: 1-3 токена, все с заглавной,
     нет знаков препинания внутри (кроме точки в конце).
+    Rejects scene headings and cast lists.
     """
     s = line.strip().rstrip(".")
     if not s:
+        return False
+    # Reject scene headings
+    if _is_scene_heading(line):
         return False
     bad = set(",;!?—–«»\"\u201c\u201d()…:")
     if any(c in bad for c in s):
@@ -124,14 +196,22 @@ def _is_drama_speaker_candidate(line: str,
     return True
 
 
-def _is_stage_direction(line: str) -> bool:
+def _is_stage_direction(line: str,
+                         known_speakers: Optional[set] = None) -> bool:
     """
-    Ремарка: в скобках ИЛИ короткая строка с глаголом действия.
+    Ремарка: в скобках ИЛИ короткая строка с глаголом действия
+    ИЛИ cast list with optional parenthetical remark.
     ВАЖНО: не закрывает Turn — добавляется внутрь него.
     """
     s = line.strip()
     if not s:
         return False
+    # Scene heading = stage direction
+    if _is_scene_heading(s):
+        return True
+    # Cast list = stage direction (list of characters present)
+    if _is_cast_list(s, known_speakers):
+        return True
     if (s.startswith("(") and s.endswith(")")) or \
        (s.startswith("[") and s.endswith("]")):
         return True
@@ -159,7 +239,7 @@ def classify_drama_line(line: str,
     s = line.strip()
     if not s:
         return ParsedLine(raw=line, line_type=LineType.EMPTY)
-    if _is_stage_direction(s):
+    if _is_stage_direction(s, known):
         return ParsedLine(raw=line, line_type=LineType.STAGE_DIR, text=s)
     if _is_drama_speaker_candidate(s, known):
         return ParsedLine(raw=line, line_type=LineType.SPEAKER,
@@ -270,7 +350,7 @@ class DialogueParser:
         s = line.strip()
         if not s:
             return ParsedLine(raw=line, line_type=LineType.EMPTY)
-        if _is_stage_direction(s):
+        if _is_stage_direction(s, known):
             return ParsedLine(raw=line, line_type=LineType.STAGE_DIR, text=s)
         if _is_drama_speaker_candidate(s, known):
             return ParsedLine(raw=line, line_type=LineType.SPEAKER,
