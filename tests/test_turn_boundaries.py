@@ -241,8 +241,8 @@ class TestSchemaVersion:
     
     def test_schema_version(self):
         d = _api("Тест.")
-        assert d.get('schema_version') == 5, \
-            f"Expected schema_version=5, got {d.get('schema_version')}"
+        assert d.get('schema_version') == 6, \
+            f"Expected schema_version=6, got {d.get('schema_version')}"
 
 
 class TestDepthMetrics:
@@ -271,6 +271,53 @@ class TestDepthMetrics:
         assert depth['lexical'] > 0.5, f"Pushkin should have high lexical, got {depth['lexical']}"
         assert depth['composite'] > depth['lexical'] * 0.01, \
             f"Rich text composite should be meaningful, got {depth['composite']}"
+
+
+class TestServiceWords:
+    """Service word classification: POS overrides, discourse, modal, semantic roles."""
+    
+    def test_pos_and_lemma_present(self):
+        d = _api("Он говорил громко.")
+        tokens = d['data']
+        alpha_tokens = [t for t in tokens if t['word'].isalpha()]
+        for t in alpha_tokens:
+            assert t.get('pos'), f"Token '{t['word']}' missing POS"
+            assert t.get('lemma'), f"Token '{t['word']}' missing lemma"
+    
+    def test_conjunction_override(self):
+        """'и', 'хотя' should be CONJ, not NOUN/GRND."""
+        d = _api("Он говорил, хотя и знал.")
+        tokens = {t['word'].lower(): t for t in d['data'] if t['word'].isalpha()}
+        assert tokens['и'].get('pos') == 'CONJ', f"'и' POS={tokens['и'].get('pos')}, expected CONJ"
+        assert tokens['хотя'].get('pos') == 'CONJ', f"'хотя' POS={tokens['хотя'].get('pos')}"
+        assert tokens['хотя'].get('discourse_role') == 'concession'
+    
+    def test_particle_override(self):
+        """'ли', 'разве', 'не' should be PRCL with modal types."""
+        d = _api("Разве вы не знаете, правда ли это?")
+        tokens_list = [t for t in d['data'] if t['word'].isalpha()]
+        by_word = {}
+        for t in tokens_list:
+            by_word.setdefault(t['word'].lower(), t)
+        
+        assert by_word['разве'].get('pos') == 'PRCL', f"'разве' POS={by_word['разве'].get('pos')}"
+        assert by_word['разве'].get('modal_type') == 'rhetorical'
+        assert by_word['ли'].get('pos') == 'PRCL'
+        assert by_word['ли'].get('modal_type') == 'interrogative'
+        assert by_word['не'].get('pos') == 'PRCL'
+        assert by_word['не'].get('modal_type') == 'negation'
+    
+    def test_service_word_stats(self):
+        d = _api("А ведь он, несмотря на это, хотя и говорил.")
+        sws = d.get('service_word_stats', {})
+        assert 'n_content' in sws
+        assert 'n_service' in sws
+        assert 'lexical_density' in sws
+        assert 'discourse_profile' in sws
+        assert 'modal_profile' in sws
+        assert 'pos_distribution' in sws
+        assert sws['n_service'] > 0, "Should detect service words"
+        assert 0 < sws['lexical_density'] < 1, f"Lexical density out of range: {sws['lexical_density']}"
 
 
 if __name__ == '__main__':

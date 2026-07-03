@@ -1353,6 +1353,77 @@ async def entropy_map(req: TensionMapRequest):
 
         results = []
         in_quotes = False
+        
+        # Service word classification tables
+        _discourse_conjunctions = {
+            # Contrast
+            'но': 'contrast', 'однако': 'contrast', 'зато': 'contrast', 'а': 'contrast',
+            'тем не менее': 'contrast', 'впрочем': 'contrast',
+            # Cause
+            'потому': 'cause', 'ведь': 'cause', 'ибо': 'cause',
+            'поскольку': 'cause', 'оттого': 'cause',
+            # Concession
+            'хотя': 'concession', 'хоть': 'concession', 'пусть': 'concession',
+            'несмотря': 'concession',
+            # Elaboration
+            'и': 'elaboration', 'также': 'elaboration', 'тоже': 'elaboration',
+            'причём': 'elaboration', 'притом': 'elaboration',
+            # Condition
+            'если': 'condition', 'коли': 'condition', 'ежели': 'condition',
+            # Purpose
+            'чтобы': 'purpose', 'дабы': 'purpose',
+            # Temporal
+            'когда': 'temporal', 'пока': 'temporal', 'прежде': 'temporal',
+            'после': 'temporal', 'едва': 'temporal',
+            # Conclusion
+            'значит': 'conclusion', 'итак': 'conclusion', 'следовательно': 'conclusion',
+            'стало быть': 'conclusion',
+        }
+        _modal_particles = {
+            # Interrogative
+            'ли': 'interrogative', 'ль': 'interrogative',
+            # Rhetorical
+            'разве': 'rhetorical', 'неужели': 'rhetorical', 'ужели': 'rhetorical',
+            'ужель': 'rhetorical', 'неужто': 'rhetorical',
+            # Presupposition (appeal to shared knowledge)
+            'же': 'presupposition', 'ведь': 'presupposition', 'ж': 'presupposition',
+            # Irrealis (subjunctive)
+            'бы': 'irrealis', 'б': 'irrealis',
+            # Negation
+            'не': 'negation', 'ни': 'negation', 'нет': 'negation',
+            # Focus/restriction
+            'только': 'focus', 'лишь': 'focus', 'именно': 'focus',
+            'даже': 'focus', 'уж': 'focus', 'уже': 'focus',
+            # Intensifier
+            'очень': 'intensifier', 'весьма': 'intensifier', 'крайне': 'intensifier',
+            # Affirmation
+            'да': 'affirmation', 'так': 'affirmation', 'точно': 'affirmation',
+        }
+        _prep_semantic_roles = {
+            # Direction
+            'в': 'location/direction', 'на': 'location/surface', 'к': 'direction',
+            'до': 'direction/limit',
+            # Source
+            'из': 'source', 'от': 'source', 'с': 'source/instrument',
+            # Topic
+            'о': 'topic', 'об': 'topic', 'обо': 'topic', 'про': 'topic',
+            # Beneficiary
+            'для': 'beneficiary', 'ради': 'beneficiary',
+            # Instrument
+            'через': 'instrument/path', 'посредством': 'instrument',
+            # Comitative (with)
+            'с': 'comitative', 'со': 'comitative',
+            # Cause
+            'из-за': 'cause', 'благодаря': 'cause', 'вследствие': 'cause',
+            # Temporal
+            'после': 'temporal', 'до': 'temporal', 'во время': 'temporal',
+            'перед': 'temporal', 'при': 'temporal/condition',
+            # Against
+            'против': 'opposition', 'вопреки': 'opposition',
+            # Without
+            'без': 'privative', 'кроме': 'privative', 'помимо': 'privative',
+        }
+        
         for i, t in enumerate(tokens):
             if t in ['"', '«', '»']: in_quotes = not in_quotes
             ent = entity_map.get(i)
@@ -1365,9 +1436,100 @@ async def entropy_map(req: TensionMapRequest):
             # Operator Detection
             op_type = operators.get_type(t)
             
-            results.append({
+            # === Morphological analysis: POS + lemma + grammemes ===
+            tok_pos = ''
+            tok_lemma = ''
+            tok_grammemes = {}
+            tok_service_type = ''    # 'conjunction', 'particle', 'preposition', 'interjection'
+            tok_discourse_role = ''  # for conjunctions: 'contrast', 'cause', etc.
+            tok_modal_type = ''      # for particles: 'interrogative', 'negation', etc.
+            tok_sem_role = ''        # for prepositions: 'direction', 'source', etc.
+            
+            # POS overrides for high-frequency function words that inflector
+            # systematically mislabels (e.g. 'и'→NOUN, 'ли'→NOUN, 'хотя'→GRND).
+            # These are the most frequent service words in Russian — disambiguating
+            # them correctly is critical for discourse/modal profiling.
+            _pos_overrides = {
+                # Conjunctions
+                'и': ('CONJ', 'и'), 'а': ('CONJ', 'а'), 'но': ('CONJ', 'но'),
+                'или': ('CONJ', 'или'), 'да': ('CONJ', 'да'),  # context-dep but usually CONJ
+                'хотя': ('CONJ', 'хотя'), 'хоть': ('CONJ', 'хоть'),
+                'однако': ('CONJ', 'однако'), 'зато': ('CONJ', 'зато'),
+                'чтобы': ('CONJ', 'чтобы'), 'если': ('CONJ', 'если'),
+                'когда': ('CONJ', 'когда'), 'пока': ('CONJ', 'пока'),
+                'ибо': ('CONJ', 'ибо'), 'дабы': ('CONJ', 'дабы'),
+                'либо': ('CONJ', 'либо'), 'причём': ('CONJ', 'причём'),
+                'притом': ('CONJ', 'притом'),
+                # Particles
+                'ли': ('PRCL', 'ли'), 'ль': ('PRCL', 'ль'),
+                'же': ('PRCL', 'же'), 'ж': ('PRCL', 'ж'),
+                'бы': ('PRCL', 'бы'), 'б': ('PRCL', 'б'),
+                'не': ('PRCL', 'не'), 'ни': ('PRCL', 'ни'),
+                'разве': ('PRCL', 'разве'), 'неужели': ('PRCL', 'неужели'),
+                'ужели': ('PRCL', 'ужели'), 'ужель': ('PRCL', 'ужель'),
+                'неужто': ('PRCL', 'неужто'),
+                'лишь': ('PRCL', 'лишь'), 'только': ('PRCL', 'только'),
+                'именно': ('PRCL', 'именно'), 'даже': ('PRCL', 'даже'),
+                'уж': ('PRCL', 'уж'), 'вот': ('PRCL', 'вот'),
+                'ведь': ('PRCL', 'ведь'),  # particle, not conjunction
+                # Prepositions
+                'несмотря': ('PREP', 'несмотря'),
+                # Interjections  
+                'ах': ('INTJ', 'ах'), 'ох': ('INTJ', 'ох'), 'эх': ('INTJ', 'эх'),
+                'ой': ('INTJ', 'ой'), 'увы': ('INTJ', 'увы'), 'ура': ('INTJ', 'ура'),
+                'эй': ('INTJ', 'эй'), 'ну': ('INTJ', 'ну'), 'браво': ('INTJ', 'браво'),
+            }
+            
+            if t[0:1].isalpha():
+                t_lower = t.lower()
+                override = _pos_overrides.get(t_lower)
+                try:
+                    parses = inflector_analyze(t)
+                    if override:
+                        # Use override POS + lemma, but still get grammemes from parse
+                        tok_pos, tok_lemma = override
+                        # Try to find matching parse for grammemes
+                        p = parses[0] if parses else None
+                        for pp in (parses or []):
+                            if getattr(pp, 'pos', '') == tok_pos:
+                                p = pp
+                                break
+                    elif parses:
+                        p = parses[0]
+                        tok_pos = getattr(p, 'pos', '')
+                        tok_lemma = getattr(p, 'lemma', t_lower)
+                    else:
+                        p = None
+                        tok_lemma = t_lower
+                    
+                    if p:
+                        tok_grammemes = {
+                            k: getattr(p, k, None)
+                            for k in ('gender', 'case', 'number', 'tense', 
+                                      'aspect', 'mood', 'person', 'voice',
+                                      'animacy', 'transitivity')
+                            if getattr(p, k, None) is not None
+                        }
+                except Exception:
+                    tok_lemma = t.lower()
+                
+                # Classify service words (outside try/except so overrides always work)
+                if tok_pos == 'PREP':
+                    tok_service_type = 'preposition'
+                    tok_sem_role = _prep_semantic_roles.get(tok_lemma, '')
+                elif tok_pos == 'CONJ':
+                    tok_service_type = 'conjunction'
+                    tok_discourse_role = _discourse_conjunctions.get(tok_lemma, '')
+                elif tok_pos == 'PRCL':
+                    tok_service_type = 'particle'
+                    tok_modal_type = _modal_particles.get(tok_lemma, '')
+                elif tok_pos == 'INTJ':
+                    tok_service_type = 'interjection'
+            
+            tok_dict = {
                 "word": t, "clean": ent['canonical'] if ent else t, "h": h,
                 "s": sentiment.get_score(t),
+                "pos": tok_pos, "lemma": tok_lemma,
                 "is_entity": ent is not None, "context_role": ent['role'] if ent else "none",
                 "social": ent['social'] if ent else "none",
                 "confidence": ent['confidence'] if ent else 0.0,
@@ -1375,7 +1537,21 @@ async def entropy_map(req: TensionMapRequest):
                 "is_operator": op_type is not None,
                 "op_type": op_type,
                 "_gap": token_gaps[i] if i < len(token_gaps) else ""
-            })
+            }
+            # Add grammemes if present
+            if tok_grammemes:
+                tok_dict['grammemes'] = tok_grammemes
+            # Add service word classification if present
+            if tok_service_type:
+                tok_dict['service_type'] = tok_service_type
+            if tok_discourse_role:
+                tok_dict['discourse_role'] = tok_discourse_role
+            if tok_modal_type:
+                tok_dict['modal_type'] = tok_modal_type
+            if tok_sem_role:
+                tok_dict['sem_role'] = tok_sem_role
+                
+            results.append(tok_dict)
         # --- Stylometry & Rhythm ---
         stylometry_result = compute_stylometry(req.text)
         # Sentence lengths for rhythm track
@@ -1901,12 +2077,48 @@ async def entropy_map(req: TensionMapRequest):
         # Compute depth metrics
         depth = compute_depth_metrics(results)
         
+        # === Aggregate service word statistics ===
+        n_content = 0
+        n_service = 0
+        discourse_profile = {}  # contrast: N, cause: N, ...
+        modal_profile = {}      # interrogative: N, negation: N, ...
+        pos_distribution = {}   # NOUN: N, VERB: N, PREP: N, ...
+        
+        for tok in results:
+            pos = tok.get('pos', '')
+            if pos:
+                pos_distribution[pos] = pos_distribution.get(pos, 0) + 1
+            
+            st = tok.get('service_type', '')
+            if st:
+                n_service += 1
+            elif tok['word'].isalpha():
+                n_content += 1
+            
+            dr = tok.get('discourse_role', '')
+            if dr:
+                discourse_profile[dr] = discourse_profile.get(dr, 0) + 1
+            mt = tok.get('modal_type', '')
+            if mt:
+                modal_profile[mt] = modal_profile.get(mt, 0) + 1
+        
+        total_words = n_content + n_service
+        service_word_stats = {
+            'n_content': n_content,
+            'n_service': n_service,
+            'lexical_density': round(n_content / total_words, 3) if total_words > 0 else 0,
+            'discourse_profile': discourse_profile,
+            'modal_profile': modal_profile,
+            'pos_distribution': pos_distribution,
+        }
+        
         return {
-            "schema_version": 5,
+            "schema_version": 6,
             "status": "success",
             "data": results,
             "stylometry": stylometry_result.to_dict(),
             "depth": depth,
+            "service_word_stats": service_word_stats,
             "rhythm": sentence_lengths,
             "genre": detect_genre(req.text),
             "dialogue_format": dialogue_format,
