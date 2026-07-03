@@ -267,11 +267,11 @@ class SpikeLexicon:
     def classify(self, word: str, top_k: int = 3) -> list[tuple[str, float]]:
         """Classify a word by spike similarity.
         
-        Returns list of (category, similarity) sorted by descending similarity.
+        Two-tier strategy:
+        1. Full vector (270d) for exact/near-exact match
+        2. POS+morphology match for category generalization (content words)
         
-        Example:
-            spike_lex.classify("воскликнул")
-            # → [('speech_verb', 0.87), ('denial', 0.23)]
+        Returns list of (category, similarity) sorted by descending similarity.
         """
         self._ensure_bootstrapped()
         
@@ -285,31 +285,84 @@ class SpikeLexicon:
         analyze = self._get_inflector()
         grammemes = {}
         lemma = word_lower
+        pos = 'UNKN'
         
         parses = analyze(word_lower)
         if parses:
             p = parses[0]
             lemma = p.lemma if hasattr(p, 'lemma') else word_lower
+            pos = p.pos if hasattr(p, 'pos') else 'UNKN'
             for attr in ('case', 'number', 'gender', 'animacy',
                          'aspect', 'tense', 'voice', 'mood', 'person'):
                 val = getattr(p, attr, None)
                 if val:
                     grammemes[attr] = val
         
-        vec = self.encoder.encode_word(word_lower, lemma, grammemes)
-        
         import mlx.core as mx
-        matches = self.codebook.recognize(
-            mx.array(vec, dtype=mx.float32), top_k=top_k * 2
-        )
         
-        # Aggregate by category
+        # Tier 1: Full vector match (finds exact word or close inflection)
+        vec = self.encoder.encode_word(word_lower, lemma, grammemes)
+        full_vec = mx.array(vec, dtype=mx.float32)
+        matches = self.codebook.recognize(full_vec, top_k=top_k * 3)
+        
         cat_scores: dict[str, float] = {}
+        
+        # Process Tier 1
         for match_key, sim in matches:
             meta = self.codebook._meta.get(match_key, {})
             cat = meta.get('category', 'unknown')
-            if cat not in cat_scores or sim > cat_scores[cat]:
-                cat_scores[cat] = sim
+            if sim > self._threshold:
+                cat_scores[cat] = max(cat_scores.get(cat, 0), sim)
+        
+        # Tier 2: POS-based category transfer (content words only)
+        # If word is a verb and we have verb-category entries, transfer category
+        _CONTENT_POS = {'VERB', 'INFN', 'NOUN', 'ADJF', 'ADJS', 'ADVB',
+                        'PRTF', 'PRTS', 'GRND'}
+        
+        if pos in _CONTENT_POS and (not cat_scores or max(cat_scores.values()) < 0.5):
+            # Find all codebook entries with matching POS
+            best_gram_sim = 0.0
+            best_cat = None
+            
+            gram_vec = mx.array(
+                self.encoder.encode_grammemes(grammemes), dtype=mx.float32
+            )
+            g_norm_q = float(mx.linalg.norm(gram_vec))
+            
+            for key, entry_vec in self.codebook._entries.items():
+                meta = self.codebook._meta.get(key, {})
+                entry_pos = meta.get('pos', 'UNKN')
+                cat = meta.get('category', 'unknown')
+                
+                # POS group match (verbs match verbs, nouns match nouns)
+                pos_match = False
+                if pos in ('VERB', 'INFN', 'GRND', 'PRTF', 'PRTS'):
+                    pos_match = entry_pos in ('VERB', 'INFN', 'GRND',
+                                               'PRTF', 'PRTS')
+                elif pos in ('NOUN',):
+                    pos_match = entry_pos == 'NOUN'
+                elif pos in ('ADJF', 'ADJS'):
+                    pos_match = entry_pos in ('ADJF', 'ADJS')
+                elif pos == 'ADVB':
+                    pos_match = entry_pos == 'ADVB'
+                
+                if not pos_match:
+                    continue
+                
+                # Gram cosine similarity
+                entry_gram = entry_vec[:14].astype(mx.float32)
+                g_norm_e = float(mx.linalg.norm(entry_gram))
+                
+                if g_norm_q > 1e-6 and g_norm_e > 1e-6:
+                    gsim = float(mx.sum(gram_vec * entry_gram)) / (g_norm_q * g_norm_e)
+                else:
+                    gsim = 0.0
+                
+                # POS match adds base confidence
+                score = 0.3 + gsim * 0.4  # 0.3 base + up to 0.4 from gram
+                
+                if score > cat_scores.get(cat, 0):
+                    cat_scores[cat] = score
         
         result = sorted(cat_scores.items(), key=lambda x: -x[1])[:top_k]
         
