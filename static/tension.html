@@ -1,0 +1,1555 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="color-scheme" content="dark">
+    <title>Logos Spectrum v5.2 — Narrative DAW</title>
+    <meta name="description" content="Монтажный анализ текста: энтропия, операторы, сентимент, актёры и диалоги.">
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+    <style>
+        /* ═══════════════════════════════════════════════════
+           Logos Spectrum v5.2 — Narrative DAW Design System
+           ═══════════════════════════════════════════════════ */
+        :root {
+            --bg: oklch(0.13 0.004 260);
+            --panel: oklch(0.155 0.005 260);
+            --surface: oklch(0.17 0.005 260);
+            --border: oklch(1 0 0 / 9%);
+            --border-subtle: oklch(1 0 0 / 5%);
+
+            --text: oklch(0.93 0.005 260);
+            --text-muted: oklch(0.62 0.01 260);
+            --text-dim: oklch(0.45 0.008 260);
+
+            --primary: oklch(0.68 0.17 250);
+            --primary-fg: oklch(0.13 0.004 260);
+            --neon: oklch(0.68 0.17 250);
+            --neon-glow: oklch(0.68 0.17 250 / 40%);
+
+            --signal-low: oklch(0.72 0.17 150);
+            --signal-high: oklch(0.64 0.2 25);
+            --signal-amber: oklch(0.78 0.14 85);
+
+            --accent-bg: oklch(0.24 0.02 250);
+
+            --font-sans: 'Inter', system-ui, sans-serif;
+            --font-mono: 'JetBrains Mono', monospace;
+            --radius: 6px;
+
+            /* Actor palette */
+            --actor-1: oklch(0.78 0.14 85);
+            --actor-2: oklch(0.68 0.17 250);
+            --actor-3: oklch(0.72 0.17 150);
+            --actor-4: oklch(0.64 0.2 25);
+        }
+
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            font-family: var(--font-sans);
+            background: var(--bg);
+            color: var(--text);
+            height: 100dvh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        /* ── Header ──────────────────────────────────── */
+        header {
+            height: 44px;
+            background: var(--panel);
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            padding: 0 12px;
+            gap: 12px;
+            flex-shrink: 0;
+            z-index: 20;
+        }
+        .logo-group { display: flex; align-items: center; gap: 8px; }
+        .logo-dot {
+            width: 8px; height: 8px; border-radius: 50%;
+            background: var(--primary);
+            box-shadow: 0 0 8px var(--neon-glow);
+        }
+        .logo {
+            font-family: var(--font-mono);
+            font-weight: 600; font-size: 0.85rem;
+            letter-spacing: -0.02em;
+        }
+        .logo .ver { color: var(--text-muted); font-weight: 400; }
+        .header-sub {
+            font-family: var(--font-mono);
+            font-size: 10px; text-transform: uppercase;
+            letter-spacing: 1.5px; color: var(--text-dim);
+        }
+        .header-right {
+            margin-left: auto;
+            display: flex; align-items: center; gap: 8px;
+        }
+        .header-stats {
+            font-family: var(--font-mono);
+            font-size: 11px; color: var(--text-muted);
+        }
+        .btn {
+            font-family: var(--font-mono);
+            font-size: 11px; font-weight: 500;
+            padding: 4px 10px; border-radius: var(--radius);
+            border: none; cursor: pointer;
+            transition: all 0.15s;
+        }
+        .btn-secondary {
+            background: oklch(0.22 0.006 260);
+            color: var(--text);
+        }
+        .btn-secondary:hover { background: oklch(0.26 0.006 260); }
+        .btn-secondary.active, .btn-primary {
+            background: var(--primary);
+            color: var(--primary-fg);
+        }
+        .btn-secondary.dimmed { opacity: 0.6; }
+
+        /* ── Main area ───────────────────────────────── */
+        .main-area {
+            display: flex;
+            flex: 1;
+            min-height: 0;
+            overflow: hidden;
+        }
+
+        /* ── Text Pane ───────────────────────────────── */
+        .text-pane {
+            flex: 1;
+            overflow-y: auto;
+            padding: 32px;
+            min-width: 0;
+        }
+        .text-pane.editing { padding: 0; }
+        .text-content {
+            display: block;
+            max-width: 680px;
+            margin: 0 auto;
+            padding: 24px 48px;
+            font-size: 15.5px;
+            line-height: 1.8;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            overflow-wrap: break-word;
+            color: var(--text);
+            text-align: justify;
+            hyphens: auto;
+            -webkit-hyphens: auto;
+            text-justify: inter-word;
+            letter-spacing: 0.01em;
+            box-sizing: border-box;
+        }
+        .text-content .para-break + .clip-span,
+        .text-content .clip-span:first-child {
+            text-indent: 1.5em;
+        }
+        .genre-verse_drama .text-content,
+        .genre-poetry .text-content {
+            text-align: center;
+            text-indent: 0;
+            max-width: 560px;
+            padding: 24px 32px;
+            line-height: 1.7;
+            white-space: normal;
+        }
+        .genre-verse_drama .text-content .clip-span,
+        .genre-poetry .text-content .clip-span {
+            text-indent: 0;
+        }
+
+        /* Inline highlights */
+        .clip-span {
+            cursor: pointer;
+            border-radius: 3px;
+            transition: background 0.15s;
+        }
+        .clip-span:hover { background: oklch(0.22 0.006 260 / 60%); }
+        .clip-span.selected {
+            background: var(--accent-bg);
+            outline: 1px solid oklch(0.68 0.17 250 / 30%);
+        }
+        .clip-span.focus-dimmed {
+            opacity: 0.2;
+            transition: opacity 0.25s;
+        }
+        .clip-span.focus-bright {
+            opacity: 1;
+            transition: opacity 0.25s;
+        }
+        .clip-span.is-dialogue { font-style: italic; }
+
+        .tok-operator {
+            background: oklch(0.68 0.17 250 / 12%);
+            color: var(--primary);
+            font-weight: 500;
+            padding: 0 2px;
+            border-radius: 3px;
+        }
+
+        /* Adaptive paragraph breaks — gap reflects semantic distance */
+        .para-break-sm {
+            display: block;
+            height: 12px;
+        }
+        .para-break-md {
+            display: block;
+            height: 1px;
+            margin: 18px 0;
+            background: linear-gradient(
+                90deg,
+                transparent 0%,
+                oklch(1 0 0 / 8%) 20%,
+                oklch(1 0 0 / 8%) 80%,
+                transparent 100%
+            );
+        }
+        .para-break-lg {
+            display: block;
+            height: 1px;
+            margin: 32px auto;
+            max-width: 120px;
+            background: oklch(1 0 0 / 12%);
+            position: relative;
+        }
+        .para-break-lg::after {
+            content: '◆';
+            position: absolute;
+            top: -7px;
+            left: 50%;
+            transform: translateX(-50%);
+            font-size: 8px;
+            color: oklch(1 0 0 / 18%);
+            background: var(--bg);
+            padding: 0 8px;
+        }
+        /* Legacy compat */
+        .para-break { display: block; height: 1px; margin: 18px 0; background: linear-gradient(90deg, transparent 0%, oklch(1 0 0 / 8%) 20%, oklch(1 0 0 / 8%) 80%, transparent 100%); }
+        .para-break-spacer {
+            display: block;
+            height: 12px;
+        }
+
+        /* Verse drama / play formatting */
+        .speaker-name {
+            display: block;
+            font-family: var(--font-mono);
+            font-size: 12px;
+            font-weight: 700;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+            text-align: center;
+            color: var(--signal-amber);
+            margin: 24px 0 6px 0;
+            padding: 4px 0;
+        }
+        .speaker-name::after {
+            content: '';
+            display: block;
+            width: 40px;
+            height: 1px;
+            background: oklch(1 0 0 / 10%);
+            margin: 4px auto 0;
+        }
+        .stage-direction {
+            display: inline;
+            font-style: italic;
+            font-size: 13px;
+            color: var(--text-dim);
+            letter-spacing: 0.03em;
+        }
+        .act-header {
+            display: block;
+            text-align: center;
+            font-family: var(--font-mono);
+            font-size: 13px;
+            font-weight: 600;
+            letter-spacing: 3px;
+            text-transform: uppercase;
+            color: var(--text-muted);
+            margin: 32px 0 16px;
+            padding: 8px 0;
+            border-top: 1px solid oklch(1 0 0 / 8%);
+            border-bottom: 1px solid oklch(1 0 0 / 8%);
+        }
+        .genre-badge {
+            font-family: var(--font-mono);
+            font-size: 11px;
+            padding: 2px 8px;
+            border-radius: 10px;
+            background: oklch(0.68 0.17 250 / 15%);
+            color: var(--primary);
+            letter-spacing: 0.5px;
+        }
+        /* ── Arc Track ── */
+        .arc-cell { position:absolute;inset:2px;border-radius:3px;transition:opacity 0.2s; }
+        .arc-exposition { background: oklch(0.55 0.12 250 / 55%); }
+        .arc-rising_action { background: oklch(0.72 0.14 85 / 55%); }
+        .arc-climax { background: oklch(0.64 0.22 25 / 70%); box-shadow: 0 0 6px oklch(0.64 0.22 25 / 40%); }
+        .arc-falling_action { background: oklch(0.60 0.10 170 / 50%); }
+        .arc-denouement { background: oklch(0.72 0.17 150 / 50%); }
+        .arc-label { position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:9px;font-family:var(--font-mono);color:oklch(1 0 0 / 80%);text-shadow:0 1px 2px oklch(0 0 0 / 60%);pointer-events:none;white-space:nowrap;overflow:hidden; }
+        .arc-legend { display:flex;gap:12px;align-items:center;margin-top:6px;flex-wrap:wrap; }
+        .arc-legend-item { display:flex;align-items:center;gap:4px;font-size:10px;font-family:var(--font-mono);color:var(--text-muted); }
+        .arc-legend-dot { width:10px;height:10px;border-radius:2px; }
+        .diag-badge { display:inline-flex;align-items:center;gap:4px;padding:3px 8px;border-radius:8px;font-size:10px;font-family:var(--font-mono);margin:2px 4px 2px 0; }
+        .diag-warning { background:oklch(0.64 0.2 25 / 18%);color:oklch(0.78 0.14 25); }
+        .diag-info { background:oklch(0.55 0.12 250 / 18%);color:oklch(0.72 0.10 250); }
+        .beauty-score { font-family:var(--font-mono);font-size:20px;font-weight:600;letter-spacing:-0.5px; }
+        .beauty-bar { height:6px;border-radius:3px;background:var(--border);overflow:hidden;margin:4px 0; }
+        .beauty-fill { height:100%;border-radius:3px;transition:width 0.5s ease; }
+        .speaker-name .tok-actor {
+            font-weight: 700;
+        }
+        .verse-line {
+            display: block;
+            padding-left: 24px;
+            text-indent: 0;
+        }
+        .genre-badge {
+            display: inline-block;
+            font-family: var(--font-mono);
+            font-size: 9px;
+            letter-spacing: 0.5px;
+            text-transform: uppercase;
+            padding: 2px 8px;
+            border-radius: 3px;
+            background: oklch(0.22 0.01 260);
+            color: var(--text-muted);
+            border: 1px solid var(--border-subtle);
+        }
+        .tok-actor { font-weight: 500; }
+        .tok-entropy-high {
+            border-bottom: 2px solid var(--signal-high);
+        }
+        .tok-entropy-mid {
+            border-bottom: 2px solid var(--signal-amber);
+        }
+
+        /* ── Highlight Modes ── */
+        /* Reset helpers — hide specific highlight types */
+        .hl-hide-entropy .tok-entropy-high,
+        .hl-hide-entropy .tok-entropy-mid { border-bottom: none; }
+
+        .hl-hide-operators .tok-operator {
+            color: var(--text) !important;
+            background: none !important;
+        }
+
+        .hl-hide-actors .tok-actor {
+            color: var(--text) !important;
+            font-weight: inherit;
+        }
+
+        .hl-hide-structure .speaker-name {
+            color: var(--text-muted) !important;
+        }
+        .hl-hide-structure .speaker-name::after { display: none; }
+        .hl-hide-structure .stage-direction {
+            color: var(--text-dim);
+            font-style: normal;
+        }
+        .hl-hide-structure .act-header {
+            color: var(--text);
+        }
+
+        /* Mode: Roles — only actors + speakers */
+        .hl-roles { /* actors visible */ }
+        .hl-roles .tok-entropy-high,
+        .hl-roles .tok-entropy-mid { border-bottom: none; }
+        .hl-roles .tok-operator { color: var(--text) !important; background: none !important; }
+
+        /* Mode: Entropy — only entropy underlines */
+        .hl-entropy { /* entropy visible */ }
+        .hl-entropy .tok-actor { color: var(--text) !important; font-weight: inherit; }
+        .hl-entropy .tok-operator { color: var(--text) !important; background: none !important; }
+        .hl-entropy .speaker-name { color: var(--text-muted) !important; }
+        .hl-entropy .speaker-name::after { display: none; }
+
+        /* Mode: Structure — only headers, speakers, stage dirs */
+        .hl-structure .tok-entropy-high,
+        .hl-structure .tok-entropy-mid { border-bottom: none; }
+        .hl-structure .tok-operator { color: var(--text) !important; background: none !important; }
+        .hl-structure .tok-actor { color: var(--text) !important; font-weight: inherit; }
+
+        /* Mode: Clean — nothing */
+        .hl-clean .tok-entropy-high,
+        .hl-clean .tok-entropy-mid { border-bottom: none; }
+        .hl-clean .tok-operator { color: var(--text) !important; background: none !important; }
+        .hl-clean .tok-actor { color: var(--text) !important; font-weight: inherit; }
+        .hl-clean .speaker-name { color: var(--text-muted) !important; }
+        .hl-clean .speaker-name::after { display: none; }
+        .hl-clean .stage-direction { color: var(--text-dim); font-style: normal; }
+        .hl-clean .act-header { color: var(--text); }
+
+        /* Highlight mode picker popover */
+        .hl-picker {
+            position: absolute;
+            top: 100%;
+            right: 0;
+            margin-top: 4px;
+            background: oklch(0.16 0.01 260);
+            border: 1px solid var(--border-subtle);
+            border-radius: 8px;
+            padding: 4px 0;
+            min-width: 160px;
+            box-shadow: 0 8px 24px oklch(0 0 0 / 40%);
+            z-index: 100;
+            display: none;
+        }
+        .hl-picker.open { display: block; }
+        .hl-picker-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 7px 14px;
+            cursor: pointer;
+            font-size: 13px;
+            color: var(--text-muted);
+            transition: background 0.15s, color 0.15s;
+            border: none;
+            background: none;
+            width: 100%;
+            text-align: left;
+            font-family: var(--font-sans);
+        }
+        .hl-picker-item:hover {
+            background: oklch(1 0 0 / 6%);
+            color: var(--text);
+        }
+        .hl-picker-item.active {
+            color: var(--primary);
+        }
+        .hl-picker-dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+
+        /* Editor textarea */
+        .edit-textarea {
+            width: 100%; height: 100%;
+            background: var(--bg);
+            color: var(--text);
+            border: none; outline: none;
+            padding: 32px;
+            font-family: var(--font-sans);
+            font-size: 15px; line-height: 1.75;
+            resize: none;
+        }
+        .edit-textarea::placeholder { color: var(--text-dim); }
+
+        /* ── Inspector ───────────────────────────────── */
+        .inspector {
+            width: 260px;
+            background: var(--panel);
+            border-left: 1px solid var(--border);
+            overflow-y: auto;
+            padding: 16px;
+            flex-shrink: 0;
+            display: flex;
+            flex-direction: column;
+        }
+        .inspector.hidden { display: none; }
+        .inspector-title {
+            font-family: var(--font-mono);
+            font-size: 10px; text-transform: uppercase;
+            letter-spacing: 1.2px; color: var(--text-dim);
+            margin-bottom: 8px;
+        }
+        .inspector-clip-text {
+            background: oklch(0.22 0.006 260 / 60%);
+            border-radius: var(--radius);
+            padding: 10px;
+            font-size: 12px; line-height: 1.5;
+            color: var(--text-muted);
+            margin-bottom: 12px;
+            display: -webkit-box;
+            -webkit-line-clamp: 4;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+        }
+        .insp-row {
+            display: flex;
+            align-items: baseline;
+            justify-content: space-between;
+            padding: 8px 0;
+            border-bottom: 1px solid var(--border-subtle);
+        }
+        .insp-label {
+            font-family: var(--font-mono);
+            font-size: 10px; text-transform: uppercase;
+            letter-spacing: 0.8px; color: var(--text-dim);
+        }
+        .insp-value {
+            font-family: var(--font-mono);
+            font-size: 13px;
+        }
+        .insp-section-title {
+            font-family: var(--font-mono);
+            font-size: 10px; text-transform: uppercase;
+            letter-spacing: 0.8px; color: var(--text-dim);
+            margin-top: 16px; margin-bottom: 8px;
+        }
+        .insp-op-row {
+            display: flex; align-items: center; gap: 8px;
+            font-size: 12px; margin-bottom: 4px;
+        }
+        .insp-op-sym {
+            font-family: var(--font-mono);
+            color: var(--primary);
+        }
+        .insp-op-label { color: var(--text-muted); }
+        .insp-op-word {
+            margin-left: auto;
+            font-family: var(--font-mono);
+        }
+        .insp-actor-badge {
+            display: inline-block;
+            background: oklch(0.22 0.006 260);
+            padding: 2px 8px; border-radius: 3px;
+            font-family: var(--font-mono);
+            font-size: 11px; margin: 2px;
+        }
+        .insp-bar-track {
+            height: 6px; flex: 1;
+            background: oklch(0.22 0.006 260);
+            border-radius: 3px; overflow: hidden;
+        }
+        .insp-bar-fill {
+            height: 100%; border-radius: 3px;
+            background: var(--primary);
+        }
+        .insp-hint {
+            margin-top: auto;
+            padding-top: 16px;
+            font-size: 11px;
+            line-height: 1.6;
+            color: var(--text-dim);
+        }
+
+        /* ── Timeline (bottom DAW) ───────────────────── */
+        .timeline-footer {
+            flex-shrink: 0;
+            border-top: 1px solid var(--border);
+            background: var(--panel);
+            overflow-x: auto;
+            overflow-y: hidden;
+            scrollbar-width: thin;
+            scrollbar-color: oklch(1 0 0 / 12%) transparent;
+        }
+        .timeline-inner { min-width: max-content; }
+
+        /* Track row */
+        .t-row {
+            display: flex;
+            border-bottom: 1px solid var(--border-subtle);
+        }
+        .t-row:last-child { border-bottom: none; }
+
+        /* Sticky label */
+        .t-label {
+            position: sticky; left: 0; z-index: 5;
+            width: 100px; min-width: 100px;
+            display: flex; align-items: center; gap: 5px;
+            padding: 0 8px;
+            font-family: var(--font-mono);
+            font-size: 9px; text-transform: uppercase;
+            letter-spacing: 0.8px; color: var(--text-dim);
+            cursor: pointer;
+            transition: color 0.2s, background 0.2s;
+            background: var(--panel);
+            border-right: 1px solid var(--border-subtle);
+        }
+        .t-label:hover { color: var(--text-muted); background: oklch(0.20 0.005 260); }
+        .t-label.focused {
+            color: var(--text);
+            background: oklch(0.22 0.008 260);
+        }
+
+        /* Dimmed rows when a track is solo'd */
+        .t-row.t-dimmed {
+            opacity: 0.15;
+            filter: grayscale(0.5);
+            transition: opacity 0.25s, filter 0.25s;
+        }
+        .t-row.t-focused {
+            opacity: 1;
+            filter: none;
+        }
+        .t-row.t-dimmed .t-label {
+            cursor: pointer;
+            opacity: 1;
+            filter: none;
+        }
+        .t-dot {
+            width: 5px; height: 5px;
+            border-radius: 50%; flex-shrink: 0;
+        }
+
+        /* Track cells */
+        .t-cells { display: flex; flex: 1; }
+
+        .t-cell {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+            flex-shrink: 0;
+            border-right: 1px solid oklch(1 0 0 / 3%);
+            cursor: pointer;
+            transition: background 0.12s;
+        }
+        .t-cell:hover { background: oklch(0.22 0.006 260 / 50%); }
+        .t-cell.sel { background: var(--accent-bg); }
+
+        /* Clip ruler */
+        .t-row-ruler .t-cell {
+            font-family: var(--font-mono);
+            font-size: 9px;
+            color: var(--text-dim);
+        }
+        .t-row-ruler .t-cell.sel { color: var(--primary); }
+
+        /* Entropy bars */
+        .ebar {
+            width: 100%;
+            border-radius: 2px 2px 0 0;
+            position: absolute;
+            bottom: 2px;
+            left: 1px; right: 1px;
+            min-width: 2px;
+        }
+
+        /* Operator symbols */
+        .opsym {
+            font-family: var(--font-mono);
+            font-size: 12px; font-weight: 500;
+            color: var(--primary);
+            text-shadow: 0 0 4px var(--neon-glow);
+        }
+
+        /* Sentiment bar */
+        .sbar-mid {
+            position: absolute; left: 0; right: 0;
+            top: 50%; height: 1px;
+            background: oklch(1 0 0 / 6%);
+        }
+        .sbar {
+            position: absolute;
+            left: 2px; right: 2px;
+            border-radius: 1px;
+        }
+
+        /* Actor presence */
+        .actor-block {
+            position: absolute;
+            inset: 3px 2px;
+            border-radius: 3px;
+            opacity: 0.8;
+        }
+
+        /* Dialogue presence */
+        .dial-block {
+            position: absolute;
+            inset: 3px 2px;
+            border-radius: 3px;
+            background: oklch(0.62 0.01 260 / 50%);
+        }
+
+        /* Scrollbars */
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: oklch(1 0 0 / 10%); border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: oklch(1 0 0 / 18%); }
+
+        /* Toast */
+        #toast {
+            position: fixed; bottom: 20px; left: 50%;
+            transform: translateX(-50%) translateY(16px);
+            background: var(--signal-low); color: var(--bg);
+            padding: 6px 16px; border-radius: 20px;
+            font-family: var(--font-mono); font-size: 11px; font-weight: 600;
+            opacity: 0; pointer-events: none;
+            transition: all 0.3s ease; z-index: 100;
+        }
+        #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+        @keyframes pulse { 0%,100%{box-shadow:0 0 4px var(--neon-glow)}50%{box-shadow:0 0 14px var(--neon-glow)} }
+        .loading .logo-dot { animation: pulse 1.2s ease-in-out infinite; }
+    </style>
+</head>
+<body>
+    <!-- ═══ Header ═══ -->
+    <header>
+        <div class="logo-group">
+            <div class="logo-dot"></div>
+            <div class="logo">Logos Spectrum <span class="ver">v5.2</span></div>
+        </div>
+        <span class="header-sub">Narrative DAW · Entropy Gate</span>
+        <div class="header-right">
+            <span class="header-stats" id="stats"></span>
+            <button class="btn btn-secondary" id="btnDownload" onclick="downloadScript()">Скачать</button>
+            <button class="btn btn-secondary" id="btnEdit" onclick="toggleEdit()">Правка</button>
+            <button class="btn btn-secondary" id="btnInsp" onclick="toggleInspector()">Инспектор</button>
+            <div style="position:relative;display:inline-block;">
+                <button class="btn btn-secondary" id="btnHighlights" onclick="toggleHlPicker()" title="Режим подсветки" style="font-size:15px;padding:4px 10px;gap:4px;display:inline-flex;align-items:center;">
+                    👁 <span id="hlModeLabel" style="font-size:11px;">Все</span>
+                </button>
+                <div class="hl-picker" id="hlPicker">
+                    <button class="hl-picker-item active" data-mode="all" onclick="setHlMode('all')">
+                        <span class="hl-picker-dot" style="background:var(--primary)"></span> Все
+                    </button>
+                    <button class="hl-picker-item" data-mode="roles" onclick="setHlMode('roles')">
+                        <span class="hl-picker-dot" style="background:var(--signal-amber)"></span> Роли
+                    </button>
+                    <button class="hl-picker-item" data-mode="entropy" onclick="setHlMode('entropy')">
+                        <span class="hl-picker-dot" style="background:var(--signal-high)"></span> Энтропия
+                    </button>
+                    <button class="hl-picker-item" data-mode="structure" onclick="setHlMode('structure')">
+                        <span class="hl-picker-dot" style="background:oklch(0.72 0.14 170)"></span> Структура
+                    </button>
+                    <button class="hl-picker-item" data-mode="clean" onclick="setHlMode('clean')">
+                        <span class="hl-picker-dot" style="background:var(--text-dim)"></span> Чисто
+                    </button>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <div id="toast">Copied!</div>
+
+    <!-- ═══ Main ═══ -->
+    <div class="main-area">
+        <section class="text-pane" id="textPane" aria-label="Текст"></section>
+        <aside class="inspector" id="inspector" aria-label="Инспектор"></aside>
+    </div>
+
+    <!-- ═══ Timeline ═══ -->
+    <footer class="timeline-footer" id="timelineFooter" aria-label="Таймлайн"></footer>
+
+    <script>
+    /* ═══════════════════════════════════════════════════
+       Logos Spectrum v5.2 — Client Logic
+       API: POST /api/entropy_map → { data: Token[] }
+       ═══════════════════════════════════════════════════ */
+
+    const ACTOR_COLORS = ['var(--actor-1)','var(--actor-2)','var(--actor-3)','var(--actor-4)'];
+    const ACTOR_HEX = ['#c9a832','#5b8def','#4ade80','#f87171'];
+    const OP_SYM = { contrast:'↔', emphasis:'↑', hedge:'?', logic:'§', modal:'◊', amplifier:'!', inversion:'¿', parenthetical:'—' };
+    const OP_LABEL = { contrast:'Contrast', emphasis:'Emphasis', hedge:'Hedge', logic:'Logic', modal:'Modality', amplifier:'Amplifier', inversion:'Inversion', parenthetical:'Parenthetical' };
+    const OP_COLOR = {
+        contrast: 'oklch(0.68 0.20 15)',     // rose
+        emphasis: 'oklch(0.82 0.16 85)',      // amber
+        hedge:    'oklch(0.68 0.17 250)',      // blue
+        logic:    'oklch(0.72 0.17 150)',      // green
+        modal:    'oklch(0.68 0.18 310)',      // violet
+        amplifier:'oklch(0.82 0.16 85)',       // amber (same as emphasis)
+        inversion:'oklch(0.68 0.17 250)',      // blue (same as hedge)
+        parenthetical:'oklch(0.62 0.01 260)',  // muted
+    };
+
+    let data = [];       // raw token array from API
+    let clips = [];      // sentence-level clips
+    let originalText = ''; // preserved for whitespace recovery
+    let editing = false;
+    let inspectorVisible = true;
+    let selectedClip = null;
+    let focusedTrack = null; // {id, actorName?} — solo'd track
+    let actorList = [];   // [{name, count}]
+    let actorColorMap = {};
+    let stylometry = null;  // StylometryResult from backend
+    let rhythm = [];        // sentence lengths array
+    let genre = 'prose';    // prose / verse_drama / poetry
+    let plotArc = null;     // {tensions, stages, events, diagnostics, beauty_score, ...}
+    let textSegments = [];  // [{after_token, type, level, reason}] from server
+
+    const SAMPLE = `Утро в доме Фамусова начиналось тихо. Софья сидела у окна и смотрела на пустую улицу, где медленно таял ночной туман. Однако тишина была обманчива: в передней уже слышались быстрые шаги.
+
+— Кто там ходит в такую рань? — спросила Софья, не оборачиваясь.
+
+— Александр Андреевич Чацкий приехал, — ответила Лиза, и в её голосе слышалась тревога. — Только что с дороги, даже не переоделся.
+
+Чацкий вошёл стремительно, словно ветер. Три года странствий не изменили его: та же ирония во взгляде, та же неукротимая энергия. Но Софья встретила его холодно, и именно эта холодность ранила его сильнее любых слов.
+
+— Чуть свет — уж на ногах, и я у ваших ног! — воскликнул Чацкий с радостью, которая тут же погасла.
+
+Он говорил о Москве, о нравах, о глупости старого мира. Возможно, он был прав. Однако правда, сказанная невпопад, звучит как оскорбление. Софья молчала, потому что её сердце уже принадлежало другому — тихому и удобному Молчалину.
+
+Фамусов появился в дверях, недовольный и заспанный. Он не любил перемен, не любил вопросов, особенно не любил умников. Следовательно, Чацкий был для него катастрофой: возмутителем спокойствия, разрушителем иерархии, ходячей декларацией независимости.
+
+— Служить бы рад, прислуживаться тошно, — бросил Чацкий, и эта фраза повисла в воздухе, как приговор.
+
+Вечером дом наполнился гостями. Шум, смех, сплетни — привычная механика светской жизни. Кто-то пустил слух о безумии Чацкого, и слух побежал по залам быстрее огня. Даже те, кто ничего не понял, кивали со значением. Так рождается общественное мнение: не из фактов, а из страха отстать от других.
+
+Чацкий стоял посреди толпы и вдруг понял, что он здесь чужой. Не потому, что его не любили. А потому, что его не слышали. Он говорил на другом языке — языке смысла, а вокруг звучал язык ритуала.
+
+— Карету мне, карету! — крикнул он, и в этом крике было больше горя, чем гнева.
+
+Утром дом Фамусова снова затих. Софья плакала у окна. Туман рассеялся, но ясности не наступило.`;
+
+    // ── Utility ──
+    function toast(msg) {
+        const t = document.getElementById('toast');
+        t.textContent = msg;
+        t.classList.add('show');
+        setTimeout(() => t.classList.remove('show'), 1200);
+    }
+    function entropyColor(h, alpha=1) {
+        const t = Math.max(0, Math.min(10, h)) / 10;
+        const hue = 150 - t * 125;
+        return `oklch(${0.68+t*0.02} ${0.14+t*0.06} ${hue} / ${alpha})`;
+    }
+
+    // ── Map token positions back to original text for whitespace recovery ──
+    function mapTokenPositions() {
+        let pos = 0;
+        data.forEach(t => {
+            const idx = originalText.indexOf(t.word, pos);
+            if (idx >= 0 && idx < pos + 200) {
+                // Found within reasonable distance
+                t._gap = originalText.slice(pos, idx);
+                pos = idx + t.word.length;
+            } else {
+                // Try from current pos with small lookahead (handles minor mismatches)
+                const near = originalText.indexOf(t.word, Math.max(0, pos - 5));
+                if (near >= 0 && near < pos + 100) {
+                    t._gap = originalText.slice(pos, near);
+                    pos = near + t.word.length;
+                } else {
+                    t._gap = ' '; // fallback
+                }
+            }
+        });
+    }
+
+    // ── Punctuation as operators (client-side enrichment, §4.2) ──
+    function enrichPunctuationOps() {
+        const PUNCT_MAP = {
+            '!': 'amplifier',
+            '?': 'inversion',
+            '—': 'parenthetical',
+            '–': 'parenthetical',
+        };
+        data.forEach(t => {
+            if (!t.is_operator && PUNCT_MAP[t.word]) {
+                t.is_operator = true;
+                t.op_type = PUNCT_MAP[t.word];
+            }
+            // Ellipsis
+            if (!t.is_operator && t.word === '…') {
+                t.is_operator = true;
+                t.op_type = 'hedge';
+            }
+        });
+    }
+
+    // ── Clipping: group raw tokens into sentence-level clips ──
+    function buildClips() {
+        clips = [];
+        if (!data.length) return;
+        let clip = newClip(0);
+        data.forEach((t, i) => {
+            clip.tokens.push({ ...t, _i: i });
+            if (/[.!?…]/.test(t.word) && i < data.length - 1) {
+                // Don't split if next token is closing punct (avoids orphaned ) on new line)
+                const next = data[i + 1];
+                if (!/^[)\]}>»"']$/.test(next.word)) {
+                    finalizeClip(clip);
+                    clips.push(clip);
+                    clip = newClip(clips.length);
+                }
+            }
+        });
+        if (clip.tokens.length) { finalizeClip(clip); clips.push(clip); }
+
+        // Actors
+        const counts = {};
+        data.forEach(t => {
+            if (t.is_entity && t.confidence >= 0.6) {
+                counts[t.clean] = (counts[t.clean] || 0) + 1;
+            }
+        });
+        actorList = Object.entries(counts)
+            .map(([name, count]) => ({ name, count }))
+            .sort((a, b) => b.count - a.count);
+        actorColorMap = {};
+        actorList.slice(0, 4).forEach((a, i) => {
+            actorColorMap[a.name] = { css: ACTOR_COLORS[i], hex: ACTOR_HEX[i] };
+        });
+    }
+    function newClip(idx) {
+        return { index: idx, tokens: [], wordCount: 0, entropySum: 0, maxEntropy: 0,
+                 sentimentSum: 0, sentimentHits: 0, operators: [], actors: new Set(), isDialogue: false };
+    }
+    function finalizeClip(c) {
+        let words = 0, eSum = 0, maxE = 0, sSum = 0, sHits = 0;
+        const ops = [], actors = new Set();
+        let hasDial = false;
+        c.tokens.forEach(t => {
+            if (t.word[0] && t.word[0].match(/[а-яА-Яa-zA-Z0-9]/)) {
+                words++;
+                const h = t.h || 0.5;
+                eSum += h; maxE = Math.max(maxE, h);
+                if (t.s > 0 || t.s < 0) { sSum += t.s; sHits++; }
+            }
+            if (t.is_operator) ops.push({ kind: t.op_type, word: t.word });
+            if (t.is_entity && t.confidence >= 0.6) actors.add(t.clean);
+            if (t.is_dialogue) hasDial = true;
+        });
+        c.wordCount = words;
+        c.avgEntropy = words ? eSum / words : 0;
+        c.maxEntropy = maxE;
+        c.sentiment = sHits ? sSum / Math.max(sHits, 2) : 0;
+        c.operators = ops;
+        c.actors = [...actors];
+        c.isDialogue = hasDial;
+        c.text = c.tokens.map(t => (t._gap || '') + t.word).join('');
+        // Detect paragraph boundary from original whitespace
+        c.startsNewParagraph = c.tokens.length > 0 && c.tokens[0]._gap && /\n\n/.test(c.tokens[0]._gap);
+        // Also detect if any token in this clip has \n\n in its gap (mid-clip paragraph)
+        if (!c.startsNewParagraph) {
+            c.startsNewParagraph = c.tokens.some(t => t._gap && /\n\n/.test(t._gap));
+        }
+    }
+
+    // ── Apply server-side structural segments to clips ──
+    function applyServerSegments() {
+        if (!textSegments.length || clips.length < 2) return;
+
+        // Build token→clip map: for each token index, which clip does it belong to?
+        const tokenToClip = {};
+        clips.forEach(clip => {
+            clip.tokens.forEach(t => { tokenToClip[t._i] = clip.index; });
+        });
+
+        // Map each segment boundary to the clip that starts after it
+        textSegments.forEach(seg => {
+            const afterTok = seg.after_token;
+            // Find the clip that contains the NEXT token after the boundary
+            let nextClipIdx = null;
+            for (let ti = afterTok + 1; ti < data.length; ti++) {
+                if (tokenToClip[ti] !== undefined) {
+                    nextClipIdx = tokenToClip[ti];
+                    break;
+                }
+            }
+            if (nextClipIdx !== null && nextClipIdx > 0 && nextClipIdx < clips.length) {
+                const clip = clips[nextClipIdx];
+                clip.startsNewParagraph = true;
+                clip._breakLevel = Math.max(clip._breakLevel || 0, seg.level);
+                clip._breakType = seg.type;
+                clip._breakReason = seg.reason;
+            }
+        });
+    }
+
+    // ── API ──
+    async function analyze(text) {
+        document.body.classList.add('loading');
+        originalText = text;
+        localStorage.setItem('logos_spectrum_text', text);
+        try {
+            const res = await fetch('/api/entropy_map', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ text })
+            });
+            const json = await res.json();
+            if (json.data) {
+                data = json.data;
+                stylometry = json.stylometry || null;
+                rhythm = json.rhythm || [];
+                genre = json.genre || 'prose';
+                plotArc = json.plot_arc || null;
+                textSegments = json.segments || [];
+                enrichPunctuationOps();
+                mapTokenPositions();
+                buildClips();
+                applyServerSegments();
+                selectedClip = clips.length - 1;
+                render();
+            }
+        } catch (e) { console.error(e); }
+        document.body.classList.remove('loading');
+    }
+
+
+    function render() {
+        renderTextPane();
+        renderInspector();
+        renderTimeline();
+        updateStats();
+    }
+
+    function updateStats() {
+        const el = document.getElementById('stats');
+        if (!clips.length) { el.textContent = ''; return; }
+        const words = data.filter(t => t.word[0] && t.word[0].match(/[а-яА-Яa-zA-Z0-9]/)).length;
+        const genreLabel = genre === 'verse_drama' ? ' · драма' : genre === 'poetry' ? ' · стихи' : '';
+        el.textContent = `${clips.length} клипов · ${words} слов${genreLabel}`;
+    }
+
+    // ── Text Pane ──
+    function renderTextPane() {
+        const pane = document.getElementById('textPane');
+        if (editing) {
+            pane.classList.add('editing');
+            const saved = localStorage.getItem('logos_spectrum_text') || SAMPLE;
+            pane.innerHTML = `<textarea class="edit-textarea" id="editArea" placeholder="Вставьте текст для анализа…">${escHtml(saved)}</textarea>`;
+            return;
+        }
+        pane.classList.remove('editing');
+        if (!clips.length) {
+            pane.innerHTML = `<div class="text-content" style="color:var(--text-dim);text-align:center;padding-top:80px;">
+                <div style="font-size:24px;margin-bottom:12px;opacity:0.3;">◎</div>
+                Нажмите <strong>Правка</strong>, вставьте текст, затем снова <strong>Правка</strong> → Спектр.
+            </div>`;
+            return;
+        }
+        // Apply genre class to pane
+        pane.classList.remove('genre-prose', 'genre-verse_drama', 'genre-poetry');
+        pane.classList.add('genre-' + genre);
+        const nodes = [];
+        let inStageDir = false;
+        clips.forEach(clip => {
+            // Insert structural break between clips (driven by server segments)
+            if (clip.startsNewParagraph && clip.index > 0) {
+                const level = clip._breakLevel || 1;
+                const type = clip._breakType || 'paragraph';
+
+                if (level >= 3 || type === 'heading') {
+                    // Act / Chapter / Heading — biggest visual break
+                    nodes.push('<div class="para-break-lg"></div>');
+                } else if (level >= 2 || type === 'scene' || type === 'speaker' || type === 'characters_line') {
+                    // Scene / Speaker / Cast — medium break
+                    nodes.push('<div class="para-break-md"></div>');
+                } else if (type === 'stage_direction') {
+                    // Stage direction — just a tiny gap
+                    nodes.push('<div class="para-break-sm"></div>');
+                } else {
+                    // Paragraph / dialogue turn — small break
+                    nodes.push('<div class="para-break-sm"></div>');
+                }
+            }
+            const isSel = selectedClip === clip.index;
+            const cls = ['clip-span'];
+            if (isSel) cls.push('selected');
+            if (clip.isDialogue) cls.push('is-dialogue');
+            // Focus dimming for actor tracks
+            if (focusedTrack) {
+                if (focusedTrack.id === 'actor') {
+                    cls.push(clip.actors.includes(focusedTrack.actorName) ? 'focus-bright' : 'focus-dimmed');
+                } else if (focusedTrack.id === 'dialogue') {
+                    cls.push(clip.isDialogue ? 'focus-bright' : 'focus-dimmed');
+                } else if (focusedTrack.id === 'operators') {
+                    cls.push(clip.operators.length > 0 ? 'focus-bright' : 'focus-dimmed');
+                }
+            }
+            let inner = '';
+            clip.tokens.forEach(t => {
+                const gap = t._gap || '';
+                if (gap) {
+                    // Punctuation that must stay glued to the previous word (closing/trailing)
+                    const isClosingPunct = /^[.)\]},;:!?…»"'—–]$/.test(t.word);
+                    
+                    if (/\n\n/.test(gap) && t !== clip.tokens[0]) {
+                        // Double newline = paragraph break
+                        if (inStageDir || isClosingPunct) {
+                            inner += isClosingPunct ? '' : ' ';
+                        } else {
+                            inner += '</span><div class="para-break-md"></div><span class="' + cls.join(' ') + '" data-clip="' + clip.index + '" onclick="selectClip(' + clip.index + ')">';
+                        }
+                    } else if (/\n/.test(gap)) {
+                        if (inStageDir || isClosingPunct) {
+                            // Never break inside stage direction or before closing punct
+                            inner += isClosingPunct ? '' : ' ';
+                        } else if (genre === 'verse_drama' || genre === 'poetry') {
+                            inner += '<br>';
+                        } else {
+                            inner += ' ';
+                        }
+                    } else {
+                        inner += gap;
+                    }
+                }
+
+                // Structural elements for verse/poetry (language-agnostic)
+                if (genre === 'verse_drama' || genre === 'poetry') {
+                    if (t.word === '(') { inner += '<span class="stage-direction">('; inStageDir = true; return; }
+                    if (t.word === ')' && inStageDir) { inner += ')</span>'; inStageDir = false; return; }
+                    if (inStageDir) { inner += escHtml(t.word); return; }
+                    const afterNewline = gap && /\n/.test(gap);
+                    // Use Unicode letter check, not Cyrillic-specific
+                    const isAllCaps = t.word.length >= 2 && t.word === t.word.toUpperCase() && /\p{L}/u.test(t.word);
+                    // Use server segment types instead of hardcoded word lists
+                    const breakType = clip._breakType || '';
+                    if (afterNewline && breakType === 'heading') {
+                        inner += `<span class="act-header">${escHtml(t.word)}</span>`;
+                        return;
+                    }
+                    if (afterNewline && (breakType === 'speaker' || (isAllCaps && t.is_entity))) {
+                        const c = actorColorMap[t.clean];
+                        const color = c ? c.css : 'var(--text-muted)';
+                        inner += `<span class="speaker-name" style="color:${color}">${escHtml(t.word)}</span>`;
+                        return;
+                    }
+                }
+
+                const isWord = t.word[0] && t.word[0].match(/[а-яА-Яa-zA-Z0-9]/);
+                if (!isWord && t.is_operator) {
+                    const opc = OP_COLOR[t.op_type] || 'var(--primary)';
+                    inner += `<span class="tok-operator" style="color:${opc};" title="${OP_LABEL[t.op_type]||t.op_type}">${escHtml(t.word)}</span>`;
+                    return;
+                }
+                if (!isWord) { inner += escHtml(t.word); return; }
+                if (t.is_operator) {
+                    const opc = OP_COLOR[t.op_type] || 'var(--primary)';
+                    inner += `<span class="tok-operator" style="color:${opc};background:${opc.replace(')', ' / 12%)')};" title="Оператор: ${OP_LABEL[t.op_type]||t.op_type}">${escHtml(t.word)}</span>`;
+                } else if (t.is_entity && t.confidence >= 0.6) {
+                    const c = actorColorMap[t.clean];
+                    const color = c ? c.css : 'var(--text)';
+                    inner += `<span class="tok-actor" style="color:${color}" title="Актёр: ${t.clean}">${escHtml(t.word)}</span>`;
+                } else if ((t.h || 0) >= 5) {
+                    inner += `<span class="tok-entropy-high" title="H=${(t.h||0).toFixed(2)}">${escHtml(t.word)}</span>`;
+                } else if ((t.h || 0) >= 3) {
+                    inner += `<span class="tok-entropy-mid" title="H=${(t.h||0).toFixed(2)}">${escHtml(t.word)}</span>`;
+                } else {
+                    inner += escHtml(t.word);
+                }
+            });
+            if (inStageDir) inner += '</span>';
+            nodes.push(`<span class="${cls.join(' ')}" data-clip="${clip.index}" onclick="selectClip(${clip.index})">${inner}</span>`);
+        });
+        pane.innerHTML = `<div class="text-content">${nodes.join('')}</div>`;
+        // Scroll selected into view
+        if (selectedClip !== null) {
+            const el = pane.querySelector(`[data-clip="${selectedClip}"]`);
+            if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+    }
+
+    // ── Inspector ──
+    function renderInspector() {
+        const el = document.getElementById('inspector');
+        el.className = inspectorVisible ? 'inspector' : 'inspector hidden';
+        if (!inspectorVisible) return;
+        const clip = selectedClip !== null ? clips[selectedClip] : null;
+        if (clip) {
+            let opsHtml = '';
+            if (clip.operators.length) {
+                opsHtml = `<div class="insp-section-title">Операторы</div>` +
+                    clip.operators.map(op => {
+                        const opc = OP_COLOR[op.kind] || 'var(--primary)';
+                        return `<div class="insp-op-row"><span class="insp-op-sym" style="color:${opc}">${OP_SYM[op.kind]||'•'}</span><span class="insp-op-label">${OP_LABEL[op.kind]||op.kind}</span><span class="insp-op-word">${escHtml(op.word)}</span></div>`;
+                    }).join('');
+            }
+            let actorsHtml = '';
+            if (clip.actors.length) {
+                actorsHtml = `<div class="insp-section-title">Актёры в клипе</div><div>` +
+                    clip.actors.map(a => `<span class="insp-actor-badge">${escHtml(a)}</span>`).join('') + `</div>`;
+            }
+            el.innerHTML = `
+                <div class="inspector-title">Инспектор · Клип ${String(clip.index+1).padStart(2,'0')}</div>
+                <div class="inspector-clip-text">${escHtml(clip.text.trim())}</div>
+                <div class="insp-row"><span class="insp-label">Слов</span><span class="insp-value">${clip.wordCount}</span></div>
+                <div class="insp-row"><span class="insp-label">Энтропия ср.</span><span class="insp-value" style="color:${entropyColor(clip.avgEntropy)}">${clip.avgEntropy.toFixed(1)}</span></div>
+                <div class="insp-row"><span class="insp-label">Энтропия пик</span><span class="insp-value" style="color:${entropyColor(clip.maxEntropy)}">${clip.maxEntropy.toFixed(1)}</span></div>
+                <div class="insp-row"><span class="insp-label">Сентимент</span><span class="insp-value" style="color:${clip.sentiment>0?'var(--signal-low)':clip.sentiment<0?'var(--signal-high)':'inherit'}">${clip.sentiment>0?'+':''}${clip.sentiment.toFixed(1)}</span></div>
+                <div class="insp-row"><span class="insp-label">Диалог</span><span class="insp-value">${clip.isDialogue?'Да':'Нет'}</span></div>
+                ${opsHtml}${actorsHtml}`;
+        } else {
+            const totalWords = data.filter(t => t.word[0] && t.word[0].match(/[а-яА-Яa-zA-Z0-9]/)).length;
+            const avgE = clips.length ? clips.reduce((s,c)=>s+c.avgEntropy,0)/clips.length : 0;
+            const opCount = clips.reduce((s,c)=>s+c.operators.length, 0);
+            let popHtml = '';
+            if (actorList.length) {
+                const maxC = actorList[0].count;
+                popHtml = `<div class="insp-section-title">Плотность населённости</div>` +
+                    actorList.slice(0,6).map(a =>
+                        `<div style="display:flex;align-items:center;gap:8px;font-size:12px;margin-bottom:6px;">
+                            <span style="width:70px;font-family:var(--font-mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escHtml(a.name)}</span>
+                            <div class="insp-bar-track"><div class="insp-bar-fill" style="width:${(a.count/maxC)*100}%"></div></div>
+                            <span style="font-family:var(--font-mono);color:var(--text-muted)">${a.count}</span>
+                        </div>`
+                    ).join('');
+            }
+            el.innerHTML = `
+                <div class="inspector-title">Инспектор · Весь текст</div>
+                <div class="insp-row"><span class="insp-label">Клипов</span><span class="insp-value">${clips.length}</span></div>
+                <div class="insp-row"><span class="insp-label">Слов</span><span class="insp-value">${totalWords}</span></div>
+                <div class="insp-row"><span class="insp-label">Энтропия ср.</span><span class="insp-value" style="color:${entropyColor(avgE)}">${avgE.toFixed(1)}</span></div>
+                <div class="insp-row"><span class="insp-label">Операторов</span><span class="insp-value">${opCount}</span></div>
+                <div class="insp-row"><span class="insp-label">Актёров</span><span class="insp-value">${actorList.length}</span></div>
+                <div class="insp-row"><span class="insp-label">Диалоги</span><span class="insp-value">${clips.some(c=>c.isDialogue)?'Да':'Нет'}</span></div>
+                <div class="insp-row"><span class="insp-label">Жанр</span><span class="genre-badge">${genre === 'verse_drama' ? 'Драма в стихах' : genre === 'poetry' ? 'Поэзия' : 'Проза'}</span></div>
+                ${(() => {
+                    // Data/Control plane metrics
+                    const wordTokens = data.filter(t => t.word[0] && t.word[0].match(/[а-яА-Яa-zA-Z0-9]/));
+                    const total = wordTokens.length || 1;
+                    const controlCount = wordTokens.filter(t => t.is_operator).length;
+                    const dataCount = total - controlCount;
+                    const dataPct = Math.round(dataCount / total * 100);
+                    const ctrlPct = 100 - dataPct;
+                    const gateRatio = dataPct > 0 ? (total / dataCount).toFixed(1) : '∞';
+                    return `
+                        <div class="insp-section-title">Data / Control Plane</div>
+                        <div class="insp-row"><span class="insp-label">Data plane</span><span class="insp-value" style="color:var(--signal-amber)">${dataPct}%</span></div>
+                        <div class="insp-row"><span class="insp-label">Control plane</span><span class="insp-value" style="color:var(--primary)">${ctrlPct}%</span></div>
+                        <div class="insp-row"><span class="insp-label">Gate savings</span><span class="insp-value">~${gateRatio}×</span></div>
+                    `;
+                })()}
+                ${stylometry ? (() => {
+                    const s = stylometry;
+                    return `
+                        <div class="insp-section-title">Стилометрия</div>
+                        <div class="insp-row"><span class="insp-label">TTR (richness)</span><span class="insp-value">${s.TTR}</span></div>
+                        <div class="insp-row"><span class="insp-label">MSL (слов/предл.)</span><span class="insp-value">${s.MSL}</span></div>
+                        <div class="insp-row"><span class="insp-label">HLR (hapax)</span><span class="insp-value">${s.HLR}</span></div>
+                        <div class="insp-row"><span class="insp-label">Yule’s K</span><span class="insp-value">${s.yules_k}</span></div>
+                        <div class="insp-row"><span class="insp-label">Вокабуляр Z</span><span class="insp-value" style="color:${s.vocab_richness_z > 0 ? 'var(--signal-low)' : 'var(--signal-high)'}">${s.vocab_richness_z > 0 ? '+' : ''}${s.vocab_richness_z}</span></div>
+                    `;
+                })() : ''}
+                ${plotArc ? (() => {
+                    const a = plotArc;
+                    const bColor = a.beauty_score > 0.7 ? 'var(--signal-low)' : a.beauty_score > 0.4 ? 'var(--signal-amber)' : 'var(--signal-high)';
+                    let diagHtml = '';
+                    if (a.diagnostics && a.diagnostics.length) {
+                        diagHtml = '<div style="margin-top:6px">' +
+                            a.diagnostics.map(d =>
+                                `<span class="diag-badge diag-${d.severity}">${d.severity==='warning'?'⚠':'ℹ'} ${d.message}</span>`
+                            ).join('') + '</div>';
+                    }
+                    const stageNames = {exposition:'Экспозиция',rising_action:'Развитие',climax:'Кульминация',falling_action:'Спад',denouement:'Развязка'};
+                    const stageColors = {exposition:'oklch(0.55 0.12 250)',rising_action:'oklch(0.72 0.14 85)',climax:'oklch(0.64 0.22 25)',falling_action:'oklch(0.60 0.10 170)',denouement:'oklch(0.72 0.17 150)'};
+                    const foundStages = [...new Set(a.stages)];
+                    const legendHtml = '<div class="arc-legend">' + foundStages.map(s =>
+                        `<span class="arc-legend-item"><span class="arc-legend-dot" style="background:${stageColors[s]}"></span>${stageNames[s]||s}</span>`
+                    ).join('') + '</div>';
+                    return `
+                        <div class="insp-section-title">Сюжетная арка</div>
+                        <div class="insp-row"><span class="insp-label">B (красота)</span><span class="beauty-score" style="color:${bColor}">${a.beauty_score.toFixed(3)}</span></div>
+                        <div class="beauty-bar"><div class="beauty-fill" style="width:${a.beauty_score*100}%;background:${bColor}"></div></div>
+                        <div class="insp-row"><span class="insp-label">Неожиданность S</span><span class="insp-value">${a.surprise}</span></div>
+                        <div class="insp-row"><span class="insp-label">Неизбежность I</span><span class="insp-value">${a.inevitability}</span></div>
+                        <div class="insp-row"><span class="insp-label">Каузальность K</span><span class="insp-value">${a.causality}</span></div>
+                        <div class="insp-row"><span class="insp-label">Арки закрыты A</span><span class="insp-value" style="color:${a.arc_closure < 1 ? 'var(--signal-high)' : 'var(--signal-low)'}">${a.arc_closure}</span></div>
+                        <div class="insp-row"><span class="insp-label">Событий (SRL)</span><span class="insp-value">${a.n_events}</span></div>
+                        ${legendHtml}
+                        ${diagHtml}
+                    `;
+                })() : ''}
+                ${popHtml}
+                <div class="insp-hint">Выберите клип на таймлайне или предложение в тексте, чтобы увидеть его спектр. Зелёное — «дешёвые» когнатные корни, красное — редкие информационные пики.</div>`;
+        }
+    }
+
+    // ── Timeline ──
+    function renderTimeline() {
+        const footer = document.getElementById('timelineFooter');
+        if (!clips.length) { footer.innerHTML = ''; return; }
+
+        const topActors = actorList.slice(0, 4);
+        const hasDialogue = clips.some(c => c.isDialogue);
+        const hasSentiment = clips.some(c => c.sentiment !== 0);
+        const cellW = Math.max(32, Math.min(80, 6 * Math.max(...clips.map(c => c.wordCount), 4)));
+
+        function cw(clip) { return Math.max(32, Math.min(120, clip.wordCount * 6)); }
+
+        // Track definitions
+        const tracks = [];
+        // Ruler
+        tracks.push({ id:'ruler', label:`Клипы · ${clips.length}`, dot:null, h:24 });
+        // Entropy
+        tracks.push({ id:'entropy', label:'Entropy', dot:'var(--signal-low)', h:56 });
+        // Operators
+        tracks.push({ id:'operators', label:'Operators', dot:'var(--neon)', h:36 });
+        // Sentiment
+        if (hasSentiment) tracks.push({ id:'sentiment', label:'Sentiment', dot:'var(--signal-low)', h:40 });
+        // Rhythm
+        if (rhythm.length > 1) tracks.push({ id:'rhythm', label:'Rhythm', dot:'oklch(0.75 0.14 60)', h:36 });
+        // Actor tracks
+        topActors.forEach((a, ai) => {
+            tracks.push({ id:'actor', actorName: a.name, label: a.name, dot: ACTOR_HEX[ai], h:28 });
+        });
+        // Dialogue
+        if (hasDialogue) tracks.push({ id:'dialogue', label:'Dialogue', dot:'var(--text-muted)', h:28 });
+        // Plot Arc track
+        if (plotArc && plotArc.stages && plotArc.stages.length > 0) {
+            tracks.push({ id:'arc', label:'Арка', dot:'oklch(0.64 0.22 25)', h:28 });
+        }
+
+        let html = '<div class="timeline-inner">';
+        tracks.forEach(tr => {
+            // Determine if this track is focused/dimmed
+            let rowCls = 't-row';
+            if (tr.id === 'ruler') rowCls += ' t-row-ruler';
+            if (focusedTrack) {
+                const isMatch = (focusedTrack.id === tr.id && (!focusedTrack.actorName || focusedTrack.actorName === tr.actorName));
+                rowCls += isMatch ? ' t-focused' : ' t-dimmed';
+            }
+            // Track key for onclick
+            const trackKey = tr.id === 'actor'
+                ? `{id:'actor',actorName:'${tr.actorName.replace(/'/g, "\\'")}'}`
+                : `{id:'${tr.id}'}`;
+
+            html += `<div class="${rowCls}">`;
+            html += `<div class="t-label ${focusedTrack && focusedTrack.id === tr.id && (!focusedTrack.actorName || focusedTrack.actorName === tr.actorName) ? 'focused' : ''}" style="height:${tr.h}px" onclick="event.stopPropagation();toggleTrackFocus(${trackKey})">`;
+            if (tr.dot) html += `<span class="t-dot" style="background:${tr.dot}"></span>`;
+            html += `<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escHtml(tr.label)}</span></div>`;
+            html += `<div class="t-cells">`;
+            clips.forEach(clip => {
+                const sel = selectedClip === clip.index;
+                const w = cw(clip);
+                const paraEdge = clip.startsNewParagraph ? 'border-left:2px solid oklch(1 0 0 / 18%);' : '';
+                html += `<div class="t-cell${sel?' sel':''}" style="width:${w}px;height:${tr.h}px;${paraEdge}" data-tclip="${clip.index}" onclick="selectClip(${clip.index})">`;
+
+                switch(tr.id) {
+                    case 'ruler':
+                        html += `<span>${String(clip.index+1).padStart(2,'0')}</span>`;
+                        break;
+                    case 'entropy': {
+                        // Mini bars per word-token
+                        const words = clip.tokens.filter(t => t.word[0] && t.word[0].match(/[а-яА-Яa-zA-Z0-9]/));
+                        if (words.length) {
+                            const barW = Math.max(1, Math.floor((w - 4) / words.length) - 1);
+                            let bars = '<span style="position:absolute;inset:2px;display:flex;align-items:flex-end;gap:1px;">';
+                            words.forEach(wt => {
+                                const h = wt.h || 0.5;
+                                const pct = Math.max(8, Math.min(95, h * 12));
+                                bars += `<span style="flex:1;min-width:1px;height:${pct}%;background:${entropyColor(h,0.85)};border-radius:1px 1px 0 0;"></span>`;
+                            });
+                            bars += '</span>';
+                            html += bars;
+                        }
+                        break;
+                    }
+                    case 'operators': {
+                        const ops = clip.operators.slice(0, 5);
+                        if (ops.length) {
+                            html += `<span style="display:flex;gap:3px;overflow:hidden;">`;
+                            ops.forEach(op => {
+                                const opc = OP_COLOR[op.kind] || 'var(--primary)';
+                                html += `<span class="opsym" style="color:${opc};text-shadow:0 0 4px ${opc.replace(')', ' / 40%)')}" title="${OP_LABEL[op.kind]||op.kind}: ${escHtml(op.word)}">${OP_SYM[op.kind]||'•'}</span>`;
+                            });
+                            html += `</span>`;
+                        }
+                        break;
+                    }
+                    case 'sentiment': {
+                        html += '<div class="sbar-mid"></div>';
+                        if (clip.sentiment !== 0) {
+                            const pct = Math.abs(clip.sentiment) * 45;
+                            const isPos = clip.sentiment > 0;
+                            html += `<div class="sbar" style="height:${pct}%;${isPos?'bottom':'top'}:50%;background:${isPos?'var(--signal-low)':'var(--signal-high)'}"></div>`;
+                        }
+                        break;
+                    }
+                    case 'actor': {
+                        if (clip.actors.includes(tr.actorName)) {
+                            html += `<div class="actor-block" style="background:${tr.dot}"></div>`;
+                        }
+                        break;
+                    }
+                    case 'dialogue': {
+                        if (clip.isDialogue) html += `<div class="dial-block"></div>`;
+                        break;
+                    }
+                    case 'rhythm': {
+                        // Map clip index to rhythm entry (sentence lengths)
+                        const rIdx = clip.index;
+                        if (rIdx < rhythm.length) {
+                            const maxR = Math.max(...rhythm, 1);
+                            const rVal = rhythm[rIdx];
+                            const pct = Math.max(8, Math.min(95, (rVal / maxR) * 90));
+                            const hue = 60 + (1 - rVal/maxR) * 40; // short=warm, long=orange
+                            html += `<div style="position:absolute;bottom:2px;left:2px;right:2px;height:${pct}%;background:oklch(0.72 0.14 ${hue} / 75%);border-radius:2px 2px 0 0;" title="${rVal} слов"></div>`;
+                        }
+                        break;
+                    }
+                    case 'arc': {
+                        if (plotArc && plotArc.stages.length > 0) {
+                            const nEv = plotArc.stages.length;
+                            const evIdx = Math.min(nEv - 1, Math.floor(clip.index / Math.max(clips.length, 1) * nEv));
+                            const stage = plotArc.stages[evIdx];
+                            html += `<div class="arc-cell arc-${stage}"></div>`;
+                            if (stage === 'climax') html += `<div class="arc-label">⭐</div>`;
+                        }
+                        break;
+                    }
+                }
+                html += `</div>`;
+            });
+            html += `</div></div>`;
+        });
+        html += '</div>';
+
+        // ── Tension curve SVG overlay ──
+        // Compute smoothed entropy per clip (moving average, window=3)
+        const eVals = clips.map(c => c.avgEntropy);
+        const smoothed = eVals.map((v, i) => {
+            const lo = Math.max(0, i - 1), hi = Math.min(eVals.length - 1, i + 1);
+            let sum = 0, cnt = 0;
+            for (let j = lo; j <= hi; j++) { sum += eVals[j]; cnt++; }
+            return sum / cnt;
+        });
+        const maxSmoothed = Math.max(...smoothed, 1);
+        // Compute cumulative X positions matching clip cell widths
+        // SVG is placed inside .t-cells (no label offset needed)
+        let cumX = 0;
+        const xs = clips.map(c => { const x = cumX + cw(c)/2; cumX += cw(c); return x; });
+        const totalW = cumX;
+        const entropyH = 56; // entropy track height
+        const points = smoothed.map((v, i) => {
+            const x = xs[i];
+            const y = entropyH - 4 - (v / maxSmoothed) * (entropyH - 8);
+            return `${x},${y}`;
+        }).join(' ');
+        html += `<svg class="tension-curve" width="${totalW}" height="${entropyH}" style="position:absolute;top:0;left:0;pointer-events:none;">
+            <polyline points="${points}" fill="none" stroke="oklch(0.90 0.01 260 / 45%)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+        </svg>`;
+
+        footer.innerHTML = html;
+        // Position SVG over entropy track
+        requestAnimationFrame(() => {
+            const svg = footer.querySelector('.tension-curve');
+            const entropyRow = footer.querySelectorAll('.t-row')[1]; // 2nd row = entropy
+            if (svg && entropyRow) {
+                const cells = entropyRow.querySelector('.t-cells');
+                if (cells) {
+                    cells.style.position = 'relative';
+                    svg.style.left = '0';
+                    svg.style.top = '0';
+                    cells.appendChild(svg);
+                }
+            }
+        });
+
+        // Scroll selected into view
+        if (selectedClip !== null) {
+            const el = footer.querySelector(`[data-tclip="${selectedClip}"]`);
+            if (el) el.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
+        }
+    }
+
+    // ── Interactions ──
+    function selectClip(idx) {
+        selectedClip = (selectedClip === idx) ? null : idx;
+        render();
+    }
+
+    function toggleTrackFocus(track) {
+        if (focusedTrack && focusedTrack.id === track.id &&
+            (!track.actorName || focusedTrack.actorName === track.actorName)) {
+            focusedTrack = null; // deselect
+        } else {
+            focusedTrack = track;
+        }
+        renderTimeline();
+        renderTextPane();
+    }
+
+    function toggleEdit() {
+        const btn = document.getElementById('btnEdit');
+        if (!editing) {
+            editing = true;
+            btn.textContent = 'Спектр';
+            btn.classList.add('active');
+            renderTextPane();
+        } else {
+            editing = false;
+            btn.textContent = 'Правка';
+            btn.classList.remove('active');
+            const area = document.getElementById('editArea');
+            if (area && area.value.trim()) {
+                analyze(area.value);
+            } else {
+                renderTextPane();
+            }
+        }
+    }
+
+    function toggleInspector() {
+        inspectorVisible = !inspectorVisible;
+        const btn = document.getElementById('btnInsp');
+        btn.classList.toggle('dimmed', !inspectorVisible);
+        renderInspector();
+        document.getElementById('inspector').className = inspectorVisible ? 'inspector' : 'inspector hidden';
+    }
+
+    let hlMode = 'all';
+    const HL_MODES = ['all', 'roles', 'entropy', 'structure', 'clean'];
+    const HL_LABELS = { all: 'Все', roles: 'Роли', entropy: 'Энтропия', structure: 'Структура', clean: 'Чисто' };
+
+    function toggleHlPicker() {
+        document.getElementById('hlPicker').classList.toggle('open');
+    }
+
+    function setHlMode(mode) {
+        hlMode = mode;
+        const pane = document.getElementById('textPane');
+        // Remove all mode classes
+        HL_MODES.forEach(m => pane.classList.remove('hl-' + m));
+        // Apply new mode (all = no class needed)
+        if (mode !== 'all') pane.classList.add('hl-' + mode);
+        // Update button label
+        document.getElementById('hlModeLabel').textContent = HL_LABELS[mode];
+        // Update active state in picker
+        document.querySelectorAll('.hl-picker-item').forEach(el => {
+            el.classList.toggle('active', el.dataset.mode === mode);
+        });
+        // Close picker
+        document.getElementById('hlPicker').classList.remove('open');
+    }
+
+    // Close picker on outside click
+    document.addEventListener('click', e => {
+        const picker = document.getElementById('hlPicker');
+        const btn = document.getElementById('btnHighlights');
+        if (picker && !picker.contains(e.target) && !btn.contains(e.target)) {
+            picker.classList.remove('open');
+        }
+    });
+
+    function escHtml(s) {
+        return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+
+    function downloadScript() {
+        if (!clips.length) return;
+        let out = `Logos Spectrum v5.2 — Narrative Script Export\n`;
+        out += `==============================================\n\n`;
+        clips.forEach(c => {
+            const type = c.isDialogue ? '[DIALOGUE]' : '[NARRATIVE]';
+            const actors = c.actors.length ? ` {Actors: ${c.actors.join(', ')}}` : '';
+            const h = ` [H: ${c.avgEntropy.toFixed(1)}]`;
+            out += `${type}${h}${actors}\n${c.text.trim()}\n\n`;
+        });
+        const blob = new Blob([out], { type: 'text/plain' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `script_export_${new Date().getTime()}.txt`;
+        a.click();
+        toast('Script exported!');
+    }
+
+    // ── Init ──
+    window.onload = () => {
+        const saved = localStorage.getItem('logos_spectrum_text');
+        if (saved) {
+            analyze(saved);
+        } else {
+            analyze(SAMPLE);
+        }
+    };
+    </script>
+</body>
+</html>
