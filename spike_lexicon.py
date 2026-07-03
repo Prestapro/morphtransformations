@@ -437,6 +437,27 @@ class SpikeLexicon:
             return True
         return word.strip().lower() in self.lex.denial_words
     
+    def is_title_signal(self, word: str) -> bool:
+        """Spike-based: work-type nouns (роман, повесть, пьеса)."""
+        if self.is_category(word, 'title_signal'):
+            return True
+        return word.strip().lower() in self.lex.title_signals
+    
+    def is_sentiment_positive(self, word: str) -> bool:
+        if self.is_category(word, 'sentiment_positive'):
+            return True
+        return word.strip().lower() in self.lex.sentiment_positive
+    
+    def is_sentiment_negative(self, word: str) -> bool:
+        if self.is_category(word, 'sentiment_negative'):
+            return True
+        return word.strip().lower() in self.lex.sentiment_negative
+    
+    def is_stage_direction_noun(self, word: str) -> bool:
+        if self.is_category(word, 'stage_direction'):
+            return True
+        return word.strip().lower() in self.lex.stage_direction_nouns
+    
     def get_discourse_role(self, word: str) -> Optional[str]:
         """Get discourse role for a word. Spike-first, YAML-fallback."""
         results = self.classify(word, top_k=3)

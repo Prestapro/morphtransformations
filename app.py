@@ -167,8 +167,8 @@ class SentimentEngine:
 
     def get_score(self, word: str) -> float:
         w = word.lower()
-        if w in self.pos: return 1.0
-        if w in self.neg: return -1.0
+        if w in self.pos or spike_lex.is_sentiment_positive(w): return 1.0
+        if w in self.neg or spike_lex.is_sentiment_negative(w): return -1.0
         return 0.0
 
 # --- NER Engine ---
@@ -1996,8 +1996,9 @@ async def entropy_map(req: TensionMapRequest):
                             except Exception:
                                 prev_lemmas.add(pw)
                     
-                    # Title: preceded by work-type nouns
-                    if prev_lemmas & lex.title_signals:
+                    if prev_lemmas & lex.title_signals or any(
+                        spike_lex.is_title_signal(l) for l in prev_lemmas
+                    ):
                         quote_subtype = 'title'
                     # Embedded speech: preceded by speech verbs (spike-enhanced)
                     elif prev_lemmas & lex.speech_verbs or any(
@@ -2005,7 +2006,9 @@ async def entropy_map(req: TensionMapRequest):
                     ):
                         quote_subtype = 'embedded_speech'
                     # Ironic: preceded by meta-markers
-                    elif any(w in prev_words for w in lex.ironic_markers):
+                    elif any(w in prev_words for w in lex.ironic_markers) or any(
+                        spike_lex.is_ironic(w) for w in prev_words if w
+                    ):
                         quote_subtype = 'ironic'
                     
                     current_quote_subtype = quote_subtype
