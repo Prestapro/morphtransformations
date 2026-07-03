@@ -1015,6 +1015,62 @@ def segment_text(text: str, tokens: list, entity_map: dict) -> list:
         except Exception as e:
             print(f'Prose parser integration failed: {e}')
     
+    # --- Pass 2.6: Unattributed em-dash dialogue fallback ---
+    # If still no speakers found, detect em-dash dialogue lines
+    # and assign alternating pseudo-speakers (Голос A / Голос B)
+    structural_speakers_after = [s for s in segments if s['type'] == 'speaker']
+    if len(structural_speakers_after) < 2:
+        # Find which tokens start lines beginning with em-dash
+        # by scanning the original text line-by-line
+        lines = text.split('\n')
+        dash_lines = []  # (line_index, stripped_line) for lines starting with '—'
+        for li, line in enumerate(lines):
+            stripped = line.strip()
+            if stripped.startswith('—'):
+                dash_lines.append(li)
+        
+        if len(dash_lines) >= 2:
+            # Find the token indices for each dash-line's '—'
+            # Strategy: track which line each token belongs to
+            # by matching original text positions
+            dash_turn_starts = []
+            
+            # Rebuild line → token index mapping from text positions
+            # Tokenizer splits text into tokens; we need to find '—' tokens
+            # that correspond to dash_lines
+            line_start_chars = []
+            pos = 0
+            for line in lines:
+                line_start_chars.append(pos)
+                pos += len(line) + 1  # +1 for \n
+            
+            for dl_idx in dash_lines:
+                line_char_start = line_start_chars[dl_idx]
+                # Find the '—' token at or near this character position
+                for ti, tok in enumerate(tokens):
+                    if tok == '—' and ti not in dash_turn_starts:
+                        # Check: is this token near the line start?
+                        # Simple: scan by token position in text
+                        tok_pos = text.find('—', line_char_start)
+                        if tok_pos is not None and tok_pos < line_char_start + 5:
+                            dash_turn_starts.append(ti)
+                            break
+            
+            if len(dash_turn_starts) >= 2:
+                # Alternating speakers: A, B, A, B, ...
+                _PSEUDO_SPEAKERS = ['Голос A', 'Голос B']
+                for idx, dash_pos in enumerate(dash_turn_starts):
+                    spk = _PSEUDO_SPEAKERS[idx % 2]
+                    segments.append({
+                        'after_token': max(0, dash_pos),
+                        'type': 'speaker',
+                        'level': 2,
+                        'reason': f'form:{spk}',
+                        'confidence': 0.60,
+                        'source_format': 'prose_em_unattributed',
+                    })
+                    line_type_map[dash_pos] = 'SPEAKER'
+                    line_type_conf_map[dash_pos] = 0.60
     # Sort by position, deduplicate (keep highest level)
     segments.sort(key=lambda s: (s['after_token'], -s['level']))
     
