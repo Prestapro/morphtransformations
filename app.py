@@ -585,10 +585,17 @@ def segment_text(text: str, tokens: list, entity_map: dict) -> list:
         has_parens = '(' in s
         s_stripped = s_bare.rstrip('.')  # allow trailing period
         
-        # Connectives and particles allowed in cast lists (not verbs/adverbs)
-        # Patterns: "Те же и Молчалин", "Все, кроме Фамусова", "Те же без Лизы"
-        _CAST_CONNECTIVES = {'и', 'или', 'да', 'с', 'со', 'and', 'or', 'y',
-                             'же', 'те', 'все', 'кроме', 'без', 'потом'}
+        # Cast connectives classified by semantic operation
+        # Used for: (1) cast-line detection (flat set), (2) future scene tracking (typed)
+        _CAST_OPS = {
+            'additive':    frozenset({'и', 'да', 'с', 'со', 'and', 'or'}),
+            'subtractive': frozenset({'кроме', 'без', 'за исключением'}),
+            'anaphoric':   frozenset({'те', 'же'}),
+            'quantifier':  frozenset({'все', 'вся', 'оба', 'обе'}),
+            'temporal':    frozenset({'потом', 'затем', 'после'}),
+            'alternative': frozenset({'или', 'либо'}),
+        }
+        _CAST_CONNECTIVES = frozenset().union(*_CAST_OPS.values())
         
         # Characters line: ≥2 capitalized words, connected by commas/connectives
         # Reject if: has '?', ends with '!' or '…', has too many non-name words
