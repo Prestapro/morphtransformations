@@ -496,7 +496,11 @@ def segment_text(text: str, tokens: list, entity_map: dict) -> list:
         if len(s) > 80:
             return (None, 0)
         words = re.findall(r'[\w]+', s)
-        if not words or len(words) > 8:
+        if not words:
+            return (None, 0)
+        # Allow longer lines if they contain parenthetical stage directions
+        max_words = 14 if '(' in s and ')' in s else 8
+        if len(words) > max_words:
             return (None, 0)
         
         # ── Speaker with colon: "ФАМУСОВ:" or "Charles:" ──
@@ -567,11 +571,19 @@ def segment_text(text: str, tokens: list, entity_map: dict) -> list:
         # ── Characters line: names with connectives or commas ──
         # "Лиза и Фамусов", "София, Лиза и Молчалин", "Romeo and Juliet"
         # "София, Лиза, Чацкий, Фамусов." — comma-separated, may end with '.'
-        cap_words = [w for w in alpha_words if w[0].isupper()]
-        lower_words = [w for w in words if w[0].islower()]
-        has_comma = ',' in s
-        has_question = '?' in s
-        s_stripped = s.rstrip('.')  # allow trailing period
+        # "Фамусов, Чацкий (смотрит на дверь)." — names + parenthetical = cast+stage
+        
+        # Strip parenthetical content for name analysis
+        s_bare = re.sub(r'\([^)]*\)', '', s).strip().rstrip('.')
+        bare_words = re.findall(r'[\w]+', s_bare)
+        bare_alpha = [w for w in bare_words if w[0].isalpha()]
+        
+        cap_words = [w for w in bare_alpha if w[0].isupper()]
+        lower_words = [w for w in bare_words if w[0].islower()]
+        has_comma = ',' in s_bare
+        has_question = '?' in s_bare
+        has_parens = '(' in s
+        s_stripped = s_bare.rstrip('.')  # allow trailing period
         
         # Connectives allowed in cast lists (not verbs/adverbs)
         _CAST_CONNECTIVES = {'и', 'или', 'да', 'с', 'со', 'and', 'or', 'y'}
@@ -579,13 +591,14 @@ def segment_text(text: str, tokens: list, entity_map: dict) -> list:
         # Characters line: ≥2 capitalized words, connected by commas/connectives
         # Reject if: has '?', ends with '!' or '…', has too many non-name words
         if (len(cap_words) >= 2 and not has_numeral and not has_question
-                and 2 <= len(alpha_words) <= 8 and not all_caps
+                and 2 <= len(bare_alpha) <= 8 and not all_caps
                 and (has_comma or lower_words)  # commas OR connectives like "и"
                 and not s_stripped.endswith(('!', '…'))):
-            # Check: do all alpha words look like proper nouns (first letter upper)?
-            all_names = all(w[0].isupper() for w in alpha_words)
+            # Check: do all alpha words (outside parens) look like proper nouns?
+            all_names = all(w[0].isupper() for w in bare_alpha)
             if all_names and has_comma:
-                # "София, Лиза, Чацкий, Фамусов." — pure comma-separated names
+                # "София, Лиза, Чацкий, Фамусов." or 
+                # "Фамусов, Чацкий (смотрит на дверь)."
                 return ('characters_line', 0.90)
             elif lower_words:
                 # Only if ALL lowercase words are connectives, not verbs/adverbs
@@ -678,8 +691,8 @@ def segment_text(text: str, tokens: list, entity_map: dict) -> list:
                 line_type_map[ti] = lt
                 line_type_conf_map[ti] = lt_conf
         
-        # Detect inline stage directions: tokens inside () within TEXT lines
-        if lt == 'TEXT':
+        # Detect inline stage directions: tokens inside () within TEXT or CHARACTERS_LINE
+        if lt in ('TEXT', 'CHARACTERS_LINE'):
             in_paren = False
             for ti in range(line_start_token, min(line_start_token + line_tok_count, len(tokens))):
                 if tokens[ti] == '(':
