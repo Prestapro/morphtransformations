@@ -303,19 +303,20 @@ def segment_text(text: str, tokens: list, entity_map: dict) -> list:
             return ('speaker', 2)
         
         # ── Single Title Case word = speaker (Чацкий, Sofia, Romeo) ──
-        # Only if followed by text (dialogue), not by blank or another heading
+        # Next line is either text (dialogue) or stage direction (parenthetical)
         if (len(words) == 1 and not all_caps and not has_numeral 
                 and not ends_with_punct and words[0][0].isupper()
-                and next_line and not next_line.startswith('(') 
-                and len(next_line) > len(s)):
+                and next_line
+                and (len(next_line) > len(s) or next_line.startswith('('))):
             return ('speaker', 2)
         
         # ── Multi-word CAPS or CAPS+numeral = structural heading ──
         if all_caps and (len(words) >= 2 or has_numeral) and not ends_with_punct:
             return ('heading', 3)
         
-        # ── Title Case + numeral = structural heading (Chapter 3, Acte II) ──
-        if title_case and has_numeral and not ends_with_punct:
+        # ── Title Case + numeral = structural heading (Chapter 3, Явление 10) ──
+        # Single capitalized word + numeral counts (not just multi-word Title Case)
+        if has_numeral and not ends_with_punct and alpha_words and all(w[0].isupper() for w in alpha_words):
             return ('heading', 3)
         
         return (None, 0)
@@ -405,7 +406,8 @@ def segment_text(text: str, tokens: list, entity_map: dict) -> list:
                         break
         
         line_start_token += line_tok_count
-        prev_blank = False
+        # Headings and stage directions act as structural separators
+        prev_blank = ltype in ('heading', 'stage_direction', 'characters_line') if ltype else False
     
     # --- Pass 1.5: Rhythm-based heading detection ---
     # Detects structural headings by form, not by language-specific keywords.
@@ -674,11 +676,13 @@ def segment_text(text: str, tokens: list, entity_map: dict) -> list:
             else:
                 end_tok = len(tokens)
             
-            # Mark the speaker name token itself
-            speaker_map[seg_tok] = {'speaker': speaker_name, 'turn_id': turn_id, 'is_speaker_label': True}
-            # Mark all tokens in this turn
+            # Mark the speaker name token itself (if not a heading token)
+            if line_type_map.get(seg_tok) != 'HEADER':
+                speaker_map[seg_tok] = {'speaker': speaker_name, 'turn_id': turn_id, 'is_speaker_label': True}
+            # Mark all tokens in this turn (skip HEADER tokens)
             for ti in range(start_tok, end_tok):
-                speaker_map[ti] = {'speaker': speaker_name, 'turn_id': turn_id, 'is_speaker_label': False}
+                if line_type_map.get(ti) != 'HEADER':
+                    speaker_map[ti] = {'speaker': speaker_name, 'turn_id': turn_id, 'is_speaker_label': False}
             
             turn_id += 1
     
