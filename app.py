@@ -31,10 +31,14 @@ from engine.narrative.scene_detector import detect_scene_boundaries
 from engine.reasoning.text_structure import analyze_thematic_progression
 from engine.language.inflector import analyze as inflector_analyze
 from ru_lexicon import lex
+from spike_lexicon import spike_lex
 
 STOP_WORDS = lex.stop_words
 TITLES = lex.titles
 KINSHIP_MARKERS = lex.kinship_markers
+
+# Bootstrap spike lexicon (encodes YAML words → spike vectors, ~300 words)
+spike_lex.bootstrap()
 
 # --- Linguistic Operator Registry ---
 class LinguisticOperatorRegistry:
@@ -374,7 +378,7 @@ def compute_depth_metrics(tokens_data: list, window_size: int = 15) -> dict:
     n_participles = 0
     for t in text_tokens:
         lem = t.get('lemma', t['word'].lower())
-        if lem in subordinators:
+        if lem in subordinators or spike_lex.is_subordinator(lem):
             n_subordinators += 1
         # Participles and gerunds indicate structural embedding
         pos = t.get('pos', '')
@@ -1443,7 +1447,7 @@ async def entropy_map(req: TensionMapRequest):
         results = []
         in_quotes = False
         
-        # Service word classification tables (from YAML)
+        # Service word classification tables (from YAML, spike-enhanced)
         _discourse_conjunctions = lex.discourse_roles
         _modal_particles = lex.modal_roles
         _prep_semantic_roles = lex.prep_roles
@@ -1988,8 +1992,10 @@ async def entropy_map(req: TensionMapRequest):
                     # Title: preceded by work-type nouns
                     if prev_lemmas & lex.title_signals:
                         quote_subtype = 'title'
-                    # Embedded speech: preceded by speech verbs
-                    elif prev_lemmas & lex.speech_verbs:
+                    # Embedded speech: preceded by speech verbs (spike-enhanced)
+                    elif prev_lemmas & lex.speech_verbs or any(
+                        spike_lex.is_speech_verb(l) for l in prev_lemmas
+                    ):
                         quote_subtype = 'embedded_speech'
                     # Ironic: preceded by meta-markers
                     elif any(w in prev_words for w in lex.ironic_markers):
