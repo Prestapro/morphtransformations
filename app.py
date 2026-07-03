@@ -737,6 +737,75 @@ def segment_text(text: str, tokens: list, entity_map: dict) -> list:
     except Exception:
         thematic = None
     
+    # --- Pass 2.5: Prose dialogue parser integration ---
+    # If no structural speaker labels found, try prose parser
+    structural_speakers = [s for s in segments if s['type'] == 'speaker']
+    if len(structural_speakers) < 2:
+        try:
+            # dialogue_parser.py is in same directory as app.py (morphtransformations/)
+            _dp_dir = str(Path(__file__).parent)
+            if _dp_dir not in sys.path:
+                sys.path.insert(0, _dp_dir)
+            from dialogue_parser import DialogueParser, detect_format as dp_detect_format
+            from dialogue_parser import TextFormat
+            
+            fmt = dp_detect_format(text)
+            if fmt in (TextFormat.PROSE_EM, TextFormat.PROSE_Q, TextFormat.MIXED):
+                parser = DialogueParser()
+                prose_turns = parser.parse(text)
+                
+                if prose_turns:
+                    # Strategy: for each prose turn with a speaker, find the 
+                    # em-dash that starts the turn's speech in the token stream.
+                    # Approach: scan tokens for the speaker's name near attribution verb,
+                    # then trace back to the preceding em-dash.
+                    
+                    # Build a set of used positions to avoid duplicates
+                    used_positions = set()
+                    
+                    for turn in prose_turns:
+                        if not turn.speaker or turn.speaker in ('UNKNOWN', 'narrator'):
+                            continue
+                        
+                        # Find the speaker name in the token stream
+                        spk_name = turn.speaker
+                        for ti, tok in enumerate(tokens):
+                            if tok == spk_name and ti not in used_positions:
+                                # Found the speaker name — find the nearest preceding em-dash
+                                dash_pos = None
+                                for j in range(ti - 1, max(ti - 10, -1), -1):
+                                    if j >= 0 and tokens[j] == '—':
+                                        dash_pos = j
+                                        break
+                                
+                                if dash_pos is not None:
+                                    # The turn starts at the em-dash BEFORE this one
+                                    # (em-dash before the speech, not the attribution dash)
+                                    # Look further back for the speech-starting dash
+                                    speech_dash = None
+                                    for j in range(dash_pos - 1, max(dash_pos - 20, -1), -1):
+                                        if j >= 0 and tokens[j] == '—':
+                                            speech_dash = j
+                                            break
+                                    
+                                    target_pos = speech_dash if speech_dash is not None else dash_pos
+                                    if target_pos not in used_positions:
+                                        used_positions.add(target_pos)
+                                        used_positions.add(ti)
+                                        segments.append({
+                                            'after_token': max(0, target_pos - 1),
+                                            'type': 'speaker',
+                                            'level': 2,
+                                            'reason': f'form:{spk_name}',
+                                            'confidence': 0.80,
+                                            'source_format': fmt.value,
+                                        })
+                                        break  # found this speaker, move to next turn
+        except ImportError:
+            pass  # dialogue_parser not available
+        except Exception as e:
+            print(f'Prose parser integration failed: {e}')
+    
     # Sort by position, deduplicate (keep highest level)
     segments.sort(key=lambda s: (s['after_token'], -s['level']))
     
