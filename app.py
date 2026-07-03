@@ -960,6 +960,33 @@ def segment_text(text: str, tokens: list, entity_map: dict) -> list:
             
             turn_id += 1
     
+    # --- Pass 6: Error recovery ---
+    # Retroactive correction hints based on evidence disagreement.
+    # Not modifying speaker_map directly — injecting correction_hints
+    # that downstream can use.
+    for pos, be in boundary_evidence.items():
+        be['correction_hint'] = None
+        
+        # Case 1: JSD-only boundary (no structural) → might be missed speaker
+        if be['n_detectors'] >= 1 and 'structural' not in be['detector_types']:
+            # Check if there's a morph signal too
+            if 'morph' in be['detector_types'] and be['fused_confidence'] > 0.7:
+                be['correction_hint'] = 'possible_missed_speaker'
+            elif be['fused_confidence'] > 0.6:
+                be['correction_hint'] = 'weak_boundary_signal'
+        
+        # Case 2: Structural boundary with very low confidence + no confirmation
+        if 'structural' in be['detector_types'] and be['n_detectors'] == 1:
+            # Find the structural source
+            for src in be['sources']:
+                if src['type'] == 'structural' and src['confidence'] < 0.85:
+                    be['correction_hint'] = 'unconfirmed_structural'
+                    break
+        
+        # Case 3: morph-only signal inside monologue = expected false positive
+        if be['n_detectors'] == 1 and 'morph' in be['detector_types']:
+            be['correction_hint'] = 'morph_only_likely_false'
+    
     return deduped, speaker_map, line_type_map, line_type_conf_map, morph_boundary_signals, kl_boundary_signals, boundary_evidence
 
 
@@ -1213,10 +1240,17 @@ async def entropy_map(req: TensionMapRequest):
                         turn_speech_acts[tid] = {}
                     turn_speech_acts[tid]['denial'] = 0.75
             
-            # Imperative mood → command
+            # Imperative mood → command (with particle normalization)
             if lt == 'TEXT' and r['word'][0].isalpha():
                 try:
-                    parses = inflector_analyze(r['word'])
+                    # Strip softening particles: -ка, -ко, -то, -нибудь, -таки
+                    word_norm = r['word']
+                    for particle in ('-ка', '-ко', '-то', '-нибудь', '-таки', '-с'):
+                        if word_norm.lower().endswith(particle):
+                            word_norm = word_norm[:len(word_norm) - len(particle)]
+                            break
+                    
+                    parses = inflector_analyze(word_norm)
                     if parses and getattr(parses[0], 'mood', None) == 'impr' and getattr(parses[0], 'pos', None) == 'VERB':
                         if tid not in turn_speech_acts:
                             turn_speech_acts[tid] = {}
@@ -1341,6 +1375,47 @@ async def entropy_map(req: TensionMapRequest):
             }
             if tid in turn_addressees:
                 dt['addressees'] = list(turn_addressees[tid])
+            
+            # Internal segments: split by line_type transitions within the turn
+            segments_internal = []
+            curr_seg_type = None
+            curr_seg_words = []
+            curr_seg_start = None
+            for idx in range(ti['start_tok'], ti['end_tok'] + 1):
+                if idx >= len(results):
+                    break
+                tok_r = results[idx]
+                tok_lt = tok_r.get('line_type', 'TEXT')
+                # Map to segment type
+                seg_type = 'dialogue'
+                if tok_lt == 'STAGE_DIRECTION':
+                    seg_type = 'stage_direction'
+                elif tok_lt == 'SPEAKER':
+                    seg_type = 'speaker_label'
+                
+                if seg_type != curr_seg_type:
+                    if curr_seg_type and curr_seg_words:
+                        segments_internal.append({
+                            'type': curr_seg_type,
+                            'text': ' '.join(curr_seg_words),
+                            'start_token': curr_seg_start,
+                            'end_token': idx - 1,
+                        })
+                    curr_seg_type = seg_type
+                    curr_seg_words = [tok_r['word']]
+                    curr_seg_start = idx
+                else:
+                    curr_seg_words.append(tok_r['word'])
+            
+            if curr_seg_type and curr_seg_words:
+                segments_internal.append({
+                    'type': curr_seg_type,
+                    'text': ' '.join(curr_seg_words),
+                    'start_token': curr_seg_start,
+                    'end_token': ti['end_tok'],
+                })
+            
+            dt['segments'] = segments_internal
             dialogue_turns.append(dt)
         
         # --- Build text_blocks[] ---
