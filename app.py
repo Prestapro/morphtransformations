@@ -1459,17 +1459,27 @@ async def entropy_map(req: TensionMapRequest):
             curr_seg_type = None
             curr_seg_words = []
             curr_seg_start = None
+            in_quote = False
             for idx in range(ti['start_tok'], ti['end_tok'] + 1):
                 if idx >= len(results):
                     break
                 tok_r = results[idx]
                 tok_lt = tok_r.get('line_type', 'TEXT')
+                
+                # Track embedded quotes: «...»
+                if tok_r['word'] == '«':
+                    in_quote = True
+                elif tok_r['word'] == '»':
+                    in_quote = False
+                
                 # Map to segment type
                 seg_type = 'dialogue'
                 if tok_lt == 'STAGE_DIRECTION':
                     seg_type = 'stage_direction'
                 elif tok_lt == 'SPEAKER':
                     seg_type = 'speaker_label'
+                elif in_quote and tok_lt == 'TEXT':
+                    seg_type = 'embedded_quote'
                 
                 if seg_type != curr_seg_type:
                     if curr_seg_type and curr_seg_words:
