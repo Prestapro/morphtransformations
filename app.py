@@ -302,12 +302,12 @@ def segment_text(text: str, tokens: list, entity_map: dict) -> list:
         if all_caps and len(words) == 1 and not has_numeral and not ends_with_punct:
             return ('speaker', 2)
         
-        # ── Single Title Case word = speaker (Чацкий, Sofia, Romeo) ──
-        # Next line is either text (dialogue) or stage direction (parenthetical)
+        # ── Single Title Case word = speaker (Чацкий, Sofia, Молчалин) ──
+        # Next line must exist and be either text or stage direction
         if (len(words) == 1 and not all_caps and not has_numeral 
                 and not ends_with_punct and words[0][0].isupper()
                 and next_line
-                and (len(next_line) > len(s) or next_line.startswith('('))):
+                and (next_line.startswith('(') or len(next_line.split()) > 1 or next_line != next_line.strip().title())):
             return ('speaker', 2)
         
         # ── Multi-word CAPS or CAPS+numeral = structural heading ──
@@ -669,18 +669,30 @@ def segment_text(text: str, tokens: list, entity_map: dict) -> list:
             # Extract speaker name from reason
             speaker_name = seg.get('reason', '').replace('form:', '').strip()
             
-            # Token range: from seg_tok+1 to next speaker/heading seg (or end)
-            start_tok = seg_tok + 1
+            # Find actual speaker token (first SPEAKER-typed token at or after seg_tok)
+            speaker_tok = None
+            for ti in range(seg_tok, min(seg_tok + 5, len(tokens))):
+                if line_type_map.get(ti) == 'SPEAKER':
+                    speaker_tok = ti
+                    break
+            if speaker_tok is None:
+                speaker_tok = seg_tok  # fallback
+            
+            # Token range: from speaker_tok to next speaker/heading seg
             if si + 1 < len(speaker_segs):
                 end_tok = speaker_segs[si + 1][0]
+                # Find actual start of next segment (skip trailing punct from our turn)
+                # The end_tok points to after_token of next seg — include trailing punct in current turn
+                # by extending to include it
+                if end_tok < len(tokens) and line_type_map.get(end_tok) == 'TEXT' and tokens[end_tok] in '.?!…;:':
+                    end_tok += 1  # include trailing punct in current turn
             else:
                 end_tok = len(tokens)
             
-            # Mark the speaker name token itself (if not a heading token)
-            if line_type_map.get(seg_tok) != 'HEADER':
-                speaker_map[seg_tok] = {'speaker': speaker_name, 'turn_id': turn_id, 'is_speaker_label': True}
-            # Mark all tokens in this turn (skip HEADER tokens)
-            for ti in range(start_tok, end_tok):
+            # Mark the speaker name token
+            speaker_map[speaker_tok] = {'speaker': speaker_name, 'turn_id': turn_id, 'is_speaker_label': True}
+            # Mark all tokens in this turn (skip HEADER tokens, start after speaker token)
+            for ti in range(speaker_tok + 1, end_tok):
                 if line_type_map.get(ti) != 'HEADER':
                     speaker_map[ti] = {'speaker': speaker_name, 'turn_id': turn_id, 'is_speaker_label': False}
             
