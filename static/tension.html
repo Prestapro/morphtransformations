@@ -1087,26 +1087,39 @@
                     }
                 }
 
-                // Structural elements for verse/poetry (language-agnostic)
-                if (genre === 'verse_drama' || genre === 'poetry') {
-                    if (t.word === '(') { inner += '<span class="stage-direction">('; inStageDir = true; return; }
+                // Structural elements — use server line_type instead of client heuristics
+                // Stage directions (works for all genres)
+                if (t.line_type === 'STAGE_DIRECTION') {
+                    if (t.word === '(' && !inStageDir) { inner += '<span class="stage-direction">('; inStageDir = true; return; }
                     if (t.word === ')' && inStageDir) { inner += ')</span>'; inStageDir = false; return; }
                     if (inStageDir) { inner += escHtml(t.word); return; }
-                    const afterNewline = gap && /\n/.test(gap);
-                    // Use Unicode letter check, not Cyrillic-specific
-                    const isAllCaps = t.word.length >= 2 && t.word === t.word.toUpperCase() && /\p{L}/u.test(t.word);
-                    // Use server segment types instead of hardcoded word lists
-                    const breakType = clip._breakType || '';
-                    if (afterNewline && breakType === 'heading') {
-                        inner += `<span class="act-header">${escHtml(t.word)}</span>`;
-                        return;
-                    }
-                    if (afterNewline && (breakType === 'speaker' || (isAllCaps && t.is_entity))) {
-                        const c = actorColorMap[t.clean];
-                        const color = c ? c.css : 'var(--text-muted)';
-                        inner += `<span class="speaker-name" style="color:${color}">${escHtml(t.word)}</span>`;
-                        return;
-                    }
+                    // Standalone stage direction line (full-line, already wrapped)
+                    inner += `<span class="stage-direction">${escHtml(t.word)}</span>`;
+                    return;
+                }
+                if (inStageDir && t.line_type !== 'STAGE_DIRECTION') {
+                    inner += '</span>';
+                    inStageDir = false;
+                }
+
+                // Headers
+                if (t.line_type === 'HEADER') {
+                    inner += `<span class="act-header">${escHtml(t.word)}</span>`;
+                    return;
+                }
+
+                // Speaker labels
+                if (t.line_type === 'SPEAKER') {
+                    const c = actorColorMap[t.clean] || actorColorMap[t.word];
+                    const color = c ? c.css : 'var(--text-muted)';
+                    inner += `<span class="speaker-name" style="color:${color}">${escHtml(t.word)}</span>`;
+                    return;
+                }
+
+                // Characters line (cast list)
+                if (t.line_type === 'CHARACTERS_LINE') {
+                    inner += `<span class="act-header" style="font-size:0.9em">${escHtml(t.word)}</span>`;
+                    return;
                 }
 
                 const isWord = t.word[0] && t.word[0].match(/[а-яА-Яa-zA-Z0-9]/);
