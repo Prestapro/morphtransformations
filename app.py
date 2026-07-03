@@ -1015,7 +1015,7 @@ async def entropy_map(req: TensionMapRequest):
         
         # Per-turn: collect addressees and speech_acts
         turn_addressees = {}  # turn_id → set of addressee names
-        turn_speech_acts = {}  # turn_id → set of acts
+        turn_speech_acts = {}  # turn_id → {act: confidence}
         
         for i, r in enumerate(results):
             tid = r.get('turn_id')
@@ -1047,15 +1047,35 @@ async def entropy_map(req: TensionMapRequest):
                             turn_addressees[tid] = set()
                         turn_addressees[tid].add(matched_speaker)
             
-            # Speech act detection: punctuation at end of sentence
+            # Speech act detection: punctuation + morphological signals
             if r['word'] == '?' and lt == 'TEXT':
                 if tid not in turn_speech_acts:
-                    turn_speech_acts[tid] = set()
-                turn_speech_acts[tid].add('question')
+                    turn_speech_acts[tid] = {}
+                turn_speech_acts[tid]['question'] = 1.0
             elif r['word'] == '!' and lt == 'TEXT':
                 if tid not in turn_speech_acts:
-                    turn_speech_acts[tid] = set()
-                turn_speech_acts[tid].add('exclamation')
+                    turn_speech_acts[tid] = {}
+                turn_speech_acts[tid]['exclamation'] = 1.0
+            
+            # Negation at start of turn: "Нет, ..." → denial
+            if lt == 'TEXT' and r['word'].lower() in ('нет', 'никак', 'нельзя') and i > 0:
+                prev_lt = results[i-1].get('line_type', '')
+                if prev_lt == 'SPEAKER' or (i > 1 and results[i-2].get('line_type') == 'SPEAKER'):
+                    if tid not in turn_speech_acts:
+                        turn_speech_acts[tid] = {}
+                    turn_speech_acts[tid]['denial'] = 0.75
+            
+            # Imperative mood → command
+            if lt == 'TEXT' and r['word'][0].isalpha():
+                try:
+                    parses = inflector_analyze(r['word'])
+                    if parses and getattr(parses[0], 'mood', None) == 'impr' and getattr(parses[0], 'pos', None) == 'VERB':
+                        if tid not in turn_speech_acts:
+                            turn_speech_acts[tid] = {}
+                        if 'command' not in turn_speech_acts[tid]:
+                            turn_speech_acts[tid]['command'] = 0.80
+                except Exception:
+                    pass
         
         # Inject addressee and speech_act into turn tokens
         for i, r in enumerate(results):
@@ -1064,7 +1084,7 @@ async def entropy_map(req: TensionMapRequest):
                 if tid in turn_addressees:
                     r['turn_addressees'] = list(turn_addressees[tid])
                 if tid in turn_speech_acts:
-                    r['speech_acts'] = list(turn_speech_acts[tid])
+                    r['speech_acts'] = turn_speech_acts[tid]  # dict {act: confidence}
 
         return {
             "status": "success",
