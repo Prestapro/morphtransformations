@@ -1,0 +1,445 @@
+# Function words of Russian language
+# Morphtransformations / Spectrum — linguistic resource
+#
+# Sources: OpenCorpora, Zaliznyak, manual curation
+# Used by: app.py token classification pipeline
+
+# === POS overrides ===
+# For high-frequency function words that inflector systematically mislabels
+# Format: word → [POS, lemma]
+pos_overrides:
+  # Conjunctions
+  и:         [CONJ, и]
+  а:         [CONJ, а]
+  но:        [CONJ, но]
+  или:       [CONJ, или]
+  да:        [CONJ, да]
+  хотя:      [CONJ, хотя]
+  хоть:      [CONJ, хоть]
+  однако:    [CONJ, однако]
+  зато:      [CONJ, зато]
+  чтобы:     [CONJ, чтобы]
+  если:      [CONJ, если]
+  когда:     [CONJ, когда]
+  пока:      [CONJ, пока]
+  ибо:       [CONJ, ибо]
+  дабы:      [CONJ, дабы]
+  либо:      [CONJ, либо]
+  причём:    [CONJ, причём]
+  притом:    [CONJ, притом]
+  # Particles
+  ли:        [PRCL, ли]
+  ль:        [PRCL, ль]
+  же:        [PRCL, же]
+  ж:         [PRCL, ж]
+  бы:        [PRCL, бы]
+  б:         [PRCL, б]
+  не:        [PRCL, не]
+  ни:        [PRCL, ни]
+  разве:     [PRCL, разве]
+  неужели:   [PRCL, неужели]
+  ужели:     [PRCL, ужели]
+  ужель:     [PRCL, ужель]
+  неужто:    [PRCL, неужто]
+  лишь:      [PRCL, лишь]
+  только:    [PRCL, только]
+  именно:    [PRCL, именно]
+  даже:      [PRCL, даже]
+  уж:        [PRCL, уж]
+  вот:       [PRCL, вот]
+  ведь:      [PRCL, ведь]
+  # Prepositions (override only where inflector mislabels)
+  несмотря:  [PREP, несмотря]
+  # Interjections
+  ах:        [INTJ, ах]
+  ох:        [INTJ, ох]
+  эх:        [INTJ, эх]
+  ой:        [INTJ, ой]
+  увы:       [INTJ, увы]
+  ура:       [INTJ, ура]
+  эй:        [INTJ, эй]
+  ну:        [INTJ, ну]
+  браво:     [INTJ, браво]
+
+
+# === Discourse roles ===
+# Conjunction → discourse relation type
+discourse_roles:
+  # Contrast
+  но:              contrast
+  однако:          contrast
+  зато:            contrast
+  а:               contrast
+  тем не менее:    contrast
+  впрочем:         contrast
+  # Cause
+  потому:          cause
+  ведь:            cause
+  ибо:             cause
+  поскольку:       cause
+  оттого:          cause
+  # Concession
+  хотя:            concession
+  хоть:            concession
+  пусть:           concession
+  несмотря:        concession
+  # Elaboration
+  и:               elaboration
+  также:           elaboration
+  тоже:            elaboration
+  причём:          elaboration
+  притом:          elaboration
+  # Condition
+  если:            condition
+  коли:            condition
+  ежели:           condition
+  # Purpose
+  чтобы:           purpose
+  дабы:            purpose
+  # Temporal
+  когда:           temporal
+  пока:            temporal
+  прежде:          temporal
+  после:           temporal
+  едва:            temporal
+  # Conclusion
+  значит:          conclusion
+  итак:            conclusion
+  следовательно:   conclusion
+  стало быть:      conclusion
+
+
+# === Modal roles ===
+# Particle → modal function
+modal_roles:
+  # Interrogative
+  ли:        interrogative
+  ль:        interrogative
+  # Rhetorical
+  разве:     rhetorical
+  неужели:   rhetorical
+  ужели:     rhetorical
+  ужель:     rhetorical
+  неужто:    rhetorical
+  # Presupposition (appeal to shared knowledge)
+  же:        presupposition
+  ведь:      presupposition
+  ж:         presupposition
+  # Irrealis (subjunctive)
+  бы:        irrealis
+  б:         irrealis
+  # Negation
+  не:        negation
+  ни:        negation
+  нет:       negation
+  # Focus/restriction
+  только:    focus
+  лишь:      focus
+  именно:    focus
+  даже:      focus
+  уж:        focus
+  уже:       focus
+  # Intensifier
+  очень:     intensifier
+  весьма:    intensifier
+  крайне:    intensifier
+  # Affirmation
+  да:        affirmation
+  так:       affirmation
+  точно:     affirmation
+
+
+# === Preposition semantic roles ===
+prep_roles:
+  # Direction
+  в:           location/direction
+  на:          location/surface
+  к:           direction
+  до:          direction/limit
+  # Source
+  из:          source
+  от:          source
+  с:           source/instrument
+  # Topic
+  о:           topic
+  об:          topic
+  обо:         topic
+  про:         topic
+  # Beneficiary
+  для:         beneficiary
+  ради:        beneficiary
+  # Instrument
+  через:       instrument/path
+  посредством: instrument
+  # Comitative
+  со:          comitative
+  # Cause
+  из-за:       cause
+  благодаря:   cause
+  вследствие:  cause
+  # Temporal
+  после:       temporal
+  во время:    temporal
+  перед:       temporal
+  при:         temporal/condition
+  # Opposition
+  против:      opposition
+  вопреки:     opposition
+  # Privative
+  без:         privative
+  кроме:       privative
+  помимо:      privative
+
+
+# === Cast connectives ===
+# Semantic operations on scene cast
+cast_connectives:
+  additive:      [и, да, с, со, and, or]
+  subtractive:   [кроме, без, за исключением]
+  anaphoric:     [те, же]
+  quantifier:    [все, вся, оба, обе]
+  temporal:      [потом, затем, после]
+  alternative:   [или, либо]
+
+
+# === Stop words ===
+# Used for entity filtering (not linguistic classification)
+stop_words:
+  - и
+  - а
+  - но
+  - в
+  - на
+  - с
+  - из
+  - по
+  - к
+  - о
+  - у
+  - я
+  - он
+  - она
+  - они
+  - мы
+  - вы
+  - тот
+  - это
+  - как
+  - так
+  - что
+  - когда
+  - если
+  - был
+  - была
+  - было
+  - были
+  - уже
+  - еще
+  - всё
+  - все
+
+
+# === Titles ===
+# Social address forms (vocative detection)
+titles:
+  - сударь
+  - сударыня
+  - милостивый
+  - господин
+  - госпожа
+  - князь
+  - граф
+  - барин
+  - барышня
+
+
+# === Kinship markers ===
+# Social role words (entity relationship)
+kinship_markers:
+  - дочь
+  - сын
+  - отец
+  - мать
+  - брат
+  - сестра
+  - дядя
+  - тетя
+  - племянник
+  - племянница
+  - внук
+  - внучка
+  - жена
+  - муж
+  - слуга
+  - служанка
+  - горничная
+  - друг
+  - подруга
+  - хозяйка
+  - хозяин
+
+
+# === Rhetorical markers ===
+# Particles that signal rhetorical questions (not seeking answer)
+rhetorical_markers:
+  - разве
+  - ужели
+  - неужели
+  - ужель
+  - неужто
+  - ужли
+  - нешто
+  - али
+
+
+# === Speech verbs ===
+# Verbs introducing direct/reported speech (lemma form)
+speech_verbs:
+  - сказать
+  - говорить
+  - ответить
+  - спросить
+  - крикнуть
+  - шептать
+  - произнести
+  - добавить
+  - заметить
+  - воскликнуть
+  - прошептать
+  - промолвить
+  - молвить
+  - возразить
+
+
+# === Title signals ===
+# Nouns/verbs indicating the following quoted text is a work title
+title_signals:
+  - роман
+  - книга
+  - повесть
+  - рассказ
+  - поэма
+  - пьеса
+  - комедия
+  - трагедия
+  - опера
+  - балет
+  - стихотворение
+  - басня
+  - песня
+  - глава
+  - статья
+  - называться
+  - назвать
+  - озаглавить
+  - написать
+
+
+# === Ironic markers ===
+# Words preceding «» quotes that signal ironic usage
+ironic_markers:
+  - называемый
+  - называемая
+  - называемое
+  - называемые
+  - якобы
+  - мнимый
+  - мнимая
+
+
+# === Stage direction nouns ===
+# Nouns that indicate stage directions when appearing solo on a line
+stage_direction_nouns:
+  - молчание
+  - пауза
+  - занавес
+  - антракт
+  - темнота
+  - тишина
+  - аплодисменты
+
+
+# === Sentiment lexicon ===
+# Minimal seed lexicon for sentiment scoring
+sentiment:
+  positive:
+    - радость
+    - любовь
+    - счастье
+    - милый
+    - добрый
+    - хорошо
+    - смех
+    - надежда
+    - друг
+  negative:
+    - грусть
+    - смерть
+    - боль
+    - злой
+    - плохо
+    - враг
+    - тоска
+    - ужас
+    - страх
+    - отказ
+
+
+# === Pronoun forms ===
+# Inflected forms for coreference resolution
+pronouns:
+  2per:   [ты, тебя, тебе, тобой, тобою, вы, вас, вам, вами]
+  3masc:  [он, его, ему, им, нём, него]
+  3fem:   [она, её, ей, ею, ней, неё]
+
+
+# === Negation words ===
+# Turn-initial words that signal denial speech act
+denial_words:
+  - нет
+  - никак
+  - нельзя
+
+
+# === Subordinators ===
+# Structural depth signals (clause nesting)
+subordinators:
+  - который
+  - которая
+  - которое
+  - которые
+  - которого
+  - которой
+  - которому
+  - которым
+  - которых
+  - что
+  - чтобы
+  - где
+  - когда
+  - если
+  - хотя
+  - потому что
+  - так как
+  - поскольку
+  - пока
+  - ибо
+
+
+# === Suffix patterns ===
+# For NER: patronymic/surname detection, gender correction
+patronymic_suffixes: [ович, евна, овна, ична]
+surname_suffixes:    [ов, ин, ский]
+masc_surname_suffixes: [ов, ев, ёв, ин, ын, ский, ской, цкий, цкой, ий, ой]
+
+# === Clitic particles ===
+# Suffixed particles (hyphenated)
+clitic_particles:
+  - "-ка"
+  - "-ко"
+  - "-то"
+  - "-нибудь"
+  - "-таки"
+  - "-с"
+  - "-либо"
+  - "-де"

@@ -30,14 +30,11 @@ from engine.narrative.plot_analysis import analyze_text as analyze_plot
 from engine.narrative.scene_detector import detect_scene_boundaries
 from engine.reasoning.text_structure import analyze_thematic_progression
 from engine.language.inflector import analyze as inflector_analyze
+from ru_lexicon import lex
 
-STOP_WORDS = {"и", "а", "но", "в", "на", "с", "из", "по", "к", "о", "у", "я", "он", "она", "они", "мы", "вы", "тот", "это", "как", "так", "что", "когда", "если", "был", "была", "было", "были", "уже", "еще", "всё", "все"}
-TITLES = {"сударь", "сударыня", "милостивый", "господин", "госпожа", "князь", "граф", "барин", "барышня"}
-KINSHIP_MARKERS = {
-    "дочь", "сын", "отец", "мать", "брат", "сестра", "дядя", "тетя", 
-    "племянник", "племянница", "внук", "внучка", "жена", "муж", 
-    "слуга", "служанка", "горничная", "друг", "подруга", "хозяйка", "хозяин"
-}
+STOP_WORDS = lex.stop_words
+TITLES = lex.titles
+KINSHIP_MARKERS = lex.kinship_markers
 
 # --- Linguistic Operator Registry ---
 class LinguisticOperatorRegistry:
@@ -160,8 +157,8 @@ class KnowledgeBase:
 # --- Sentiment Engine ---
 class SentimentEngine:
     def __init__(self):
-        self.pos = {"радость", "любовь", "счастье", "милый", "добрый", "хорошо", "смех", "надежда", "друг"}
-        self.neg = {"грусть", "смерть", "боль", "злой", "плохо", "враг", "тоска", "ужас", "страх", "отказ"}
+        self.pos = lex.sentiment_positive
+        self.neg = lex.sentiment_negative
 
     def get_score(self, word: str) -> float:
         w = word.lower()
@@ -528,10 +525,7 @@ def segment_text(text: str, tokens: list, entity_map: dict) -> list:
                     pass
             
             # Fallback: stage direction nouns (not morphologically verb-like)
-            _STAGE_NOUNS = {
-                'молчание', 'пауза', 'занавес', 'антракт', 'темнота',
-                'тишина', 'аплодисменты',
-            }
+            _STAGE_NOUNS = lex.stage_direction_nouns
             lower_set = {w.lower().rstrip('.') for w in words}
             if is_stage_verb or (lower_set & _STAGE_NOUNS):
                 return ('stage_direction', 0.85)  # inflector: VERB+3per or stage noun
@@ -585,17 +579,8 @@ def segment_text(text: str, tokens: list, entity_map: dict) -> list:
         has_parens = '(' in s
         s_stripped = s_bare.rstrip('.')  # allow trailing period
         
-        # Cast connectives classified by semantic operation
-        # Used for: (1) cast-line detection (flat set), (2) future scene tracking (typed)
-        _CAST_OPS = {
-            'additive':    frozenset({'и', 'да', 'с', 'со', 'and', 'or'}),
-            'subtractive': frozenset({'кроме', 'без', 'за исключением'}),
-            'anaphoric':   frozenset({'те', 'же'}),
-            'quantifier':  frozenset({'все', 'вся', 'оба', 'обе'}),
-            'temporal':    frozenset({'потом', 'затем', 'после'}),
-            'alternative': frozenset({'или', 'либо'}),
-        }
-        _CAST_CONNECTIVES = frozenset().union(*_CAST_OPS.values())
+        # Cast connectives classified by semantic operation (from YAML)
+        _CAST_CONNECTIVES = lex.cast_connectives
         
         # Characters line: ≥2 capitalized words, connected by commas/connectives
         # Reject if: has '?', ends with '!' or '…', has too many non-name words
@@ -1460,75 +1445,10 @@ async def entropy_map(req: TensionMapRequest):
         results = []
         in_quotes = False
         
-        # Service word classification tables
-        _discourse_conjunctions = {
-            # Contrast
-            'но': 'contrast', 'однако': 'contrast', 'зато': 'contrast', 'а': 'contrast',
-            'тем не менее': 'contrast', 'впрочем': 'contrast',
-            # Cause
-            'потому': 'cause', 'ведь': 'cause', 'ибо': 'cause',
-            'поскольку': 'cause', 'оттого': 'cause',
-            # Concession
-            'хотя': 'concession', 'хоть': 'concession', 'пусть': 'concession',
-            'несмотря': 'concession',
-            # Elaboration
-            'и': 'elaboration', 'также': 'elaboration', 'тоже': 'elaboration',
-            'причём': 'elaboration', 'притом': 'elaboration',
-            # Condition
-            'если': 'condition', 'коли': 'condition', 'ежели': 'condition',
-            # Purpose
-            'чтобы': 'purpose', 'дабы': 'purpose',
-            # Temporal
-            'когда': 'temporal', 'пока': 'temporal', 'прежде': 'temporal',
-            'после': 'temporal', 'едва': 'temporal',
-            # Conclusion
-            'значит': 'conclusion', 'итак': 'conclusion', 'следовательно': 'conclusion',
-            'стало быть': 'conclusion',
-        }
-        _modal_particles = {
-            # Interrogative
-            'ли': 'interrogative', 'ль': 'interrogative',
-            # Rhetorical
-            'разве': 'rhetorical', 'неужели': 'rhetorical', 'ужели': 'rhetorical',
-            'ужель': 'rhetorical', 'неужто': 'rhetorical',
-            # Presupposition (appeal to shared knowledge)
-            'же': 'presupposition', 'ведь': 'presupposition', 'ж': 'presupposition',
-            # Irrealis (subjunctive)
-            'бы': 'irrealis', 'б': 'irrealis',
-            # Negation
-            'не': 'negation', 'ни': 'negation', 'нет': 'negation',
-            # Focus/restriction
-            'только': 'focus', 'лишь': 'focus', 'именно': 'focus',
-            'даже': 'focus', 'уж': 'focus', 'уже': 'focus',
-            # Intensifier
-            'очень': 'intensifier', 'весьма': 'intensifier', 'крайне': 'intensifier',
-            # Affirmation
-            'да': 'affirmation', 'так': 'affirmation', 'точно': 'affirmation',
-        }
-        _prep_semantic_roles = {
-            # Direction
-            'в': 'location/direction', 'на': 'location/surface', 'к': 'direction',
-            'до': 'direction/limit',
-            # Source
-            'из': 'source', 'от': 'source', 'с': 'source/instrument',
-            # Topic
-            'о': 'topic', 'об': 'topic', 'обо': 'topic', 'про': 'topic',
-            # Beneficiary
-            'для': 'beneficiary', 'ради': 'beneficiary',
-            # Instrument
-            'через': 'instrument/path', 'посредством': 'instrument',
-            # Comitative (with)
-            'с': 'comitative', 'со': 'comitative',
-            # Cause
-            'из-за': 'cause', 'благодаря': 'cause', 'вследствие': 'cause',
-            # Temporal
-            'после': 'temporal', 'до': 'temporal', 'во время': 'temporal',
-            'перед': 'temporal', 'при': 'temporal/condition',
-            # Against
-            'против': 'opposition', 'вопреки': 'opposition',
-            # Without
-            'без': 'privative', 'кроме': 'privative', 'помимо': 'privative',
-        }
+        # Service word classification tables (from YAML)
+        _discourse_conjunctions = lex.discourse_roles
+        _modal_particles = lex.modal_roles
+        _prep_semantic_roles = lex.prep_roles
         
         for i, t in enumerate(tokens):
             if t in ['"', '«', '»']: in_quotes = not in_quotes
@@ -1551,40 +1471,7 @@ async def entropy_map(req: TensionMapRequest):
             tok_modal_type = ''      # for particles: 'interrogative', 'negation', etc.
             tok_sem_role = ''        # for prepositions: 'direction', 'source', etc.
             
-            # POS overrides for high-frequency function words that inflector
-            # systematically mislabels (e.g. 'и'→NOUN, 'ли'→NOUN, 'хотя'→GRND).
-            # These are the most frequent service words in Russian — disambiguating
-            # them correctly is critical for discourse/modal profiling.
-            _pos_overrides = {
-                # Conjunctions
-                'и': ('CONJ', 'и'), 'а': ('CONJ', 'а'), 'но': ('CONJ', 'но'),
-                'или': ('CONJ', 'или'), 'да': ('CONJ', 'да'),  # context-dep but usually CONJ
-                'хотя': ('CONJ', 'хотя'), 'хоть': ('CONJ', 'хоть'),
-                'однако': ('CONJ', 'однако'), 'зато': ('CONJ', 'зато'),
-                'чтобы': ('CONJ', 'чтобы'), 'если': ('CONJ', 'если'),
-                'когда': ('CONJ', 'когда'), 'пока': ('CONJ', 'пока'),
-                'ибо': ('CONJ', 'ибо'), 'дабы': ('CONJ', 'дабы'),
-                'либо': ('CONJ', 'либо'), 'причём': ('CONJ', 'причём'),
-                'притом': ('CONJ', 'притом'),
-                # Particles
-                'ли': ('PRCL', 'ли'), 'ль': ('PRCL', 'ль'),
-                'же': ('PRCL', 'же'), 'ж': ('PRCL', 'ж'),
-                'бы': ('PRCL', 'бы'), 'б': ('PRCL', 'б'),
-                'не': ('PRCL', 'не'), 'ни': ('PRCL', 'ни'),
-                'разве': ('PRCL', 'разве'), 'неужели': ('PRCL', 'неужели'),
-                'ужели': ('PRCL', 'ужели'), 'ужель': ('PRCL', 'ужель'),
-                'неужто': ('PRCL', 'неужто'),
-                'лишь': ('PRCL', 'лишь'), 'только': ('PRCL', 'только'),
-                'именно': ('PRCL', 'именно'), 'даже': ('PRCL', 'даже'),
-                'уж': ('PRCL', 'уж'), 'вот': ('PRCL', 'вот'),
-                'ведь': ('PRCL', 'ведь'),  # particle, not conjunction
-                # Prepositions
-                'несмотря': ('PREP', 'несмотря'),
-                # Interjections  
-                'ах': ('INTJ', 'ах'), 'ох': ('INTJ', 'ох'), 'эх': ('INTJ', 'эх'),
-                'ой': ('INTJ', 'ой'), 'увы': ('INTJ', 'увы'), 'ура': ('INTJ', 'ура'),
-                'эй': ('INTJ', 'эй'), 'ну': ('INTJ', 'ну'), 'браво': ('INTJ', 'браво'),
-            }
+            _pos_overrides = lex.pos_overrides
             
             if t[0:1].isalpha():
                 t_lower = t.lower()
@@ -1835,8 +1722,7 @@ async def entropy_map(req: TensionMapRequest):
                 
                 # Rhetorical question detection via 3 signals:
                 # Signal 1: rhetorical markers in the question clause
-                rhetorical_markers = {'разве', 'ужели', 'неужели', 'ужель', 
-                                      'неужто', 'ужли', 'нешто', 'али'}
+                rhetorical_markers = lex.rhetorical_markers
                 has_marker = False
                 # Scan backwards from '?' to previous sentence end or turn start
                 for back_j in range(i - 1, max(i - 30, -1), -1):
@@ -2102,21 +1988,13 @@ async def entropy_map(req: TensionMapRequest):
                                 prev_lemmas.add(pw)
                     
                     # Title: preceded by work-type nouns
-                    title_signals = {'роман', 'книга', 'повесть', 'рассказ', 'поэма', 
-                                     'пьеса', 'комедия', 'трагедия', 'опера', 'балет',
-                                     'стихотворение', 'басня', 'песня', 'глава', 'статья',
-                                     'называться', 'назвать', 'озаглавить', 'написать'}
-                    if prev_lemmas & title_signals:
+                    if prev_lemmas & lex.title_signals:
                         quote_subtype = 'title'
                     # Embedded speech: preceded by speech verbs
-                    elif prev_lemmas & {'сказать', 'говорить', 'ответить', 'спросить',
-                                         'крикнуть', 'шептать', 'произнести', 'добавить',
-                                         'заметить', 'воскликнуть', 'прошептать',
-                                         'промолвить', 'молвить', 'возразить'}:
+                    elif prev_lemmas & lex.speech_verbs:
                         quote_subtype = 'embedded_speech'
                     # Ironic: preceded by meta-markers
-                    elif any(w in prev_words for w in ['называемый', 'называемая', 
-                             'называемое', 'называемые', 'якобы', 'мнимый', 'мнимая']):
+                    elif any(w in prev_words for w in lex.ironic_markers):
                         quote_subtype = 'ironic'
                     
                     current_quote_subtype = quote_subtype
