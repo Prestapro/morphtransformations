@@ -1236,13 +1236,43 @@ async def entropy_map(req: TensionMapRequest):
                     r['speaker'] = prev['speaker']
                     r['turn_id'] = prev['turn_id']
 
-        # --- Addressee detection ---
-        # Find speaker names mentioned inside TEXT lines (vocative/address)
-        # Pattern: name entity in TEXT position + comma/exclamation context
+        # --- Entity registry + Addressee detection ---
+        # Build canonical entity registry from speaker segments
+        # Handles: ФАМУСОВ / Фамусов / фамусов → entity_id 'famusov'
         known_speaker_names = set()
+        entity_registry = {}  # lowercase_form → {'canonical': str, 'entity_id': str}
+        
         for s in text_segments:
             if s['type'] == 'speaker':
-                known_speaker_names.add(s.get('reason', '').replace('form:', '').strip())
+                raw_name = s.get('reason', '').replace('form:', '').strip()
+                if not raw_name:
+                    continue
+                known_speaker_names.add(raw_name)
+                canonical = raw_name.title() if raw_name.isupper() else raw_name
+                eid = canonical.lower().replace('ё', 'е')
+                
+                # Register all case variants
+                for variant in (raw_name, raw_name.lower(), raw_name.upper(), canonical):
+                    entity_registry[variant] = {'canonical': canonical, 'entity_id': eid}
+                
+                # Try inflector for oblique forms (Фамусова → Фамусов)
+                try:
+                    parses = inflector_analyze(canonical)
+                    if parses:
+                        lemma = getattr(parses[0], 'lemma', None)
+                        if lemma and lemma != canonical.lower():
+                            canon_from_lemma = lemma.title()
+                            entity_registry[lemma] = {'canonical': canon_from_lemma, 'entity_id': eid}
+                            entity_registry[lemma.title()] = {'canonical': canon_from_lemma, 'entity_id': eid}
+                except Exception:
+                    pass
+        
+        def resolve_entity(word):
+            """Resolve word to (canonical_name, entity_id) or (None, None)."""
+            entry = entity_registry.get(word) or entity_registry.get(word.lower())
+            if entry:
+                return entry['canonical'], entry['entity_id']
+            return None, None
         
         # Per-turn: collect addressees and speech_acts
         turn_addressees = {}  # turn_id → set of addressee names
@@ -1315,7 +1345,7 @@ async def entropy_map(req: TensionMapRequest):
                 except Exception:
                     pass
         
-        # Inject addressee, speech_act, and entity_role into turn tokens
+        # Inject addressee, speech_act, entity_role, and entity_id into turn tokens
         for i, r in enumerate(results):
             tid = r.get('turn_id')
             if tid is not None:
@@ -1323,15 +1353,30 @@ async def entropy_map(req: TensionMapRequest):
                     r['turn_addressees'] = list(turn_addressees[tid])
                 if tid in turn_speech_acts:
                     r['speech_acts'] = turn_speech_acts[tid]  # dict {act: confidence}
+                # Normalize speaker name via entity registry
+                spk = r.get('speaker', '')
+                canon, eid = resolve_entity(spk)
+                if eid:
+                    r['speaker'] = canon  # normalize speaker name
+                    r['entity_id'] = eid
             
-            # Entity/Role assignment (F.88-90)
+            # Entity/Role assignment (F.88-90) + entity_id
             lt = r.get('line_type', '')
             if lt == 'SPEAKER':
                 r['entity_role'] = 'speaker'
+                canon, eid = resolve_entity(r['word'])
+                if eid:
+                    r['entity_id'] = eid
             elif r.get('is_addressee'):
                 r['entity_role'] = 'addressee'
+                canon, eid = resolve_entity(r['word'])
+                if eid:
+                    r['entity_id'] = eid
             elif lt == 'TEXT' and r.get('is_entity') and r.get('confidence', 0) >= 0.6:
                 r['entity_role'] = 'mentioned'
+                canon, eid = resolve_entity(r['word'])
+                if eid:
+                    r['entity_id'] = eid
         
         # --- Turn-pair linking ---
         # Link question turns to their answers: turn N (?) → turn N+1
@@ -1451,6 +1496,11 @@ async def entropy_map(req: TensionMapRequest):
                 'text': ' '.join(text_words),
                 'speech_acts': ti['speech_acts'],
             }
+            # Add entity_id for speaker
+            canon, eid = resolve_entity(ti['speaker'])
+            if eid:
+                dt['speaker'] = canon
+                dt['entity_id'] = eid
             if tid in turn_addressees:
                 dt['addressees'] = list(turn_addressees[tid])
             
@@ -1519,6 +1569,7 @@ async def entropy_map(req: TensionMapRequest):
             text_blocks.append(block)
 
         return {
+            "schema_version": 4,
             "status": "success",
             "data": results,
             "stylometry": stylometry_result.to_dict(),
