@@ -302,6 +302,14 @@ def segment_text(text: str, tokens: list, entity_map: dict) -> list:
         if all_caps and len(words) == 1 and not has_numeral and not ends_with_punct:
             return ('speaker', 2)
         
+        # ── Single Title Case word = speaker (Чацкий, Sofia, Romeo) ──
+        # Only if followed by text (dialogue), not by blank or another heading
+        if (len(words) == 1 and not all_caps and not has_numeral 
+                and not ends_with_punct and words[0][0].isupper()
+                and next_line and not next_line.startswith('(') 
+                and len(next_line) > len(s)):
+            return ('speaker', 2)
+        
         # ── Multi-word CAPS or CAPS+numeral = structural heading ──
         if all_caps and (len(words) >= 2 or has_numeral) and not ends_with_punct:
             return ('heading', 3)
@@ -603,7 +611,47 @@ def segment_text(text: str, tokens: list, entity_map: dict) -> list:
             deduped.append(s)
             seen_positions.add(s['after_token'])
     
-    return deduped
+    # --- Build speech turns ---
+    # Walk segments to assign speaker/turn_id to every token.
+    # Speaker segment at token T → all tokens from T+1 until next speaker/heading
+    # belong to that speaker's turn.
+    speaker_map = {}  # token_index → {'speaker': str, 'turn_id': int}
+    
+    # Collect speaker boundaries sorted by position
+    speaker_segs = [(s['after_token'], s) for s in deduped 
+                    if s['type'] in ('speaker', 'heading', 'characters_line')]
+    speaker_segs.sort(key=lambda x: x[0])
+    
+    if speaker_segs:
+        turn_id = 0
+        for si in range(len(speaker_segs)):
+            seg_tok = speaker_segs[si][0]
+            seg = speaker_segs[si][1]
+            
+            if seg['type'] != 'speaker':
+                # Headings/cast lines reset the speaker
+                turn_id += 1
+                continue
+            
+            # Extract speaker name from reason
+            speaker_name = seg.get('reason', '').replace('form:', '').strip()
+            
+            # Token range: from seg_tok+1 to next speaker/heading seg (or end)
+            start_tok = seg_tok + 1
+            if si + 1 < len(speaker_segs):
+                end_tok = speaker_segs[si + 1][0]
+            else:
+                end_tok = len(tokens)
+            
+            # Mark the speaker name token itself
+            speaker_map[seg_tok] = {'speaker': speaker_name, 'turn_id': turn_id, 'is_speaker_label': True}
+            # Mark all tokens in this turn
+            for ti in range(start_tok, end_tok):
+                speaker_map[ti] = {'speaker': speaker_name, 'turn_id': turn_id, 'is_speaker_label': False}
+            
+            turn_id += 1
+    
+    return deduped, speaker_map
 
 
 @app.post("/api/entropy_map")
@@ -767,10 +815,18 @@ async def entropy_map(req: TensionMapRequest):
 
         # --- Structural Segmentation ---
         text_segments = []
+        speaker_map = {}
         try:
-            text_segments = segment_text(req.text, tokens, entity_map)
+            text_segments, speaker_map = segment_text(req.text, tokens, entity_map)
         except Exception as e:
             print(f'Segmentation failed: {e}')
+        
+        # Inject speaker/turn into token results
+        for i, r in enumerate(results):
+            si = speaker_map.get(i)
+            if si:
+                r['speaker'] = si['speaker']
+                r['turn_id'] = si['turn_id']
 
         return {
             "status": "success",

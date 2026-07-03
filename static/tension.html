@@ -377,12 +377,18 @@
         .hl-structure .tok-entropy-mid { border-bottom: none; }
         .hl-structure .tok-operator { color: var(--text) !important; background: none !important; }
         .hl-structure .tok-actor { color: var(--text) !important; font-weight: inherit; }
+        .hl-structure .tok-turn { background: none !important; }
+
+        /* Mode: Entropy — hide roles/turns */
+        .hl-entropy .tok-actor { color: var(--text) !important; font-weight: inherit; }
+        .hl-entropy .tok-turn { background: none !important; }
 
         /* Mode: Clean — nothing */
         .hl-clean .tok-entropy-high,
         .hl-clean .tok-entropy-mid { border-bottom: none; }
         .hl-clean .tok-operator { color: var(--text) !important; background: none !important; }
         .hl-clean .tok-actor { color: var(--text) !important; font-weight: inherit; }
+        .hl-clean .tok-turn { background: none !important; }
         .hl-clean .speaker-name { color: var(--text-muted) !important; }
         .hl-clean .speaker-name::after { display: none; }
         .hl-clean .stage-direction { color: var(--text-dim); font-style: normal; }
@@ -1117,6 +1123,10 @@
                     const c = actorColorMap[t.clean];
                     const color = c ? c.css : 'var(--text)';
                     inner += `<span class="tok-actor" style="color:${color}" title="Актёр: ${t.clean}">${escHtml(t.word)}</span>`;
+                } else if (t.speaker && actorColorMap[t.speaker]) {
+                    const c = actorColorMap[t.speaker];
+                    const tint = c.css.replace(')', ' / 0.08)').replace('hsl(', 'hsla(').replace('rgb(', 'rgba(');
+                    inner += `<span class="tok-turn" style="background:${tint}" title="Реплика: ${t.speaker}" data-turn="${t.turn_id}">${escHtml(t.word)}</span>`;
                 } else if ((t.h || 0) >= 5) {
                     inner += `<span class="tok-entropy-high" title="H=${(t.h||0).toFixed(2)}">${escHtml(t.word)}</span>`;
                 } else if ((t.h || 0) >= 3) {
