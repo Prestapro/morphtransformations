@@ -758,6 +758,107 @@ def segment_text(text: str, tokens: list, entity_map: dict) -> list:
     except Exception as e:
         print(f'Morph boundary pass failed: {e}')
     
+    # --- Pass 4: KL-divergence boundary signals ---
+    # Distributional shift detection: compare lexical distribution in
+    # sliding windows before/after each position. JSD peak = candidate
+    # for speaker change (different "voice" = different word distribution).
+    # Uses Jensen-Shannon Divergence (bounded 0-1) instead of raw KL.
+    kl_boundary_signals = []
+    try:
+        import math
+        _KL_WINDOW = 15  # tokens per window (larger for Russian morphology)
+        _JSD_ZSCORE = 1.0  # z-scores above mean to register as signal
+        _MIN_GAP = 8  # minimum tokens between reported peaks
+        
+        # Build lemmatized token stream (only alpha tokens from TEXT lines)
+        lemma_stream = []  # [(original_tok_idx, lemma)]
+        for ti, tok in enumerate(tokens):
+            if not tok[0].isalpha():
+                continue
+            lt = line_type_map.get(ti, 'TEXT')
+            if lt not in ('TEXT',):
+                continue
+            # Lemmatize via inflector
+            parses = inflector_analyze(tok)
+            lemma = parses[0].lemma if parses and hasattr(parses[0], 'lemma') else tok.lower()
+            lemma_stream.append((ti, lemma))
+        
+        def _jsd(before_lemmas, after_lemmas):
+            """Jensen-Shannon Divergence (symmetric, bounded [0, ln2])."""
+            from collections import Counter as _C
+            p_cnt = _C(before_lemmas)
+            q_cnt = _C(after_lemmas)
+            vocab = set(p_cnt) | set(q_cnt)
+            n_p = len(before_lemmas)
+            n_q = len(after_lemmas)
+            
+            # Build probability distributions with Laplace smoothing
+            v = len(vocab)
+            p = {w: (p_cnt.get(w, 0) + 1) / (n_p + v) for w in vocab}
+            q = {w: (q_cnt.get(w, 0) + 1) / (n_q + v) for w in vocab}
+            
+            # M = (P + Q) / 2
+            m = {w: (p[w] + q[w]) / 2.0 for w in vocab}
+            
+            # JSD = (KL(P||M) + KL(Q||M)) / 2
+            kl_pm = sum(p[w] * math.log(p[w] / m[w]) for w in vocab if p[w] > 0)
+            kl_qm = sum(q[w] * math.log(q[w] / m[w]) for w in vocab if q[w] > 0)
+            
+            jsd = (kl_pm + kl_qm) / 2.0
+            # Normalize to [0, 1] by dividing by ln(2)
+            return jsd / math.log(2)
+        
+        if len(lemma_stream) >= _KL_WINDOW * 2:
+            jsd_scores = []  # (stream_pos, jsd_value, tok_idx)
+            
+            for split in range(_KL_WINDOW, len(lemma_stream) - _KL_WINDOW + 1):
+                before = [l for _, l in lemma_stream[split - _KL_WINDOW:split]]
+                after = [l for _, l in lemma_stream[split:split + _KL_WINDOW]]
+                
+                jsd = _jsd(before, after)
+                tok_idx = lemma_stream[split][0]
+                jsd_scores.append((split, jsd, tok_idx))
+            
+            # Find peaks using z-score (relative to text's distribution)
+            jsd_values = [j for _, j, _ in jsd_scores]
+            jsd_mean = sum(jsd_values) / len(jsd_values)
+            jsd_std = (sum((j - jsd_mean)**2 for j in jsd_values) / len(jsd_values))**0.5
+            jsd_threshold = jsd_mean + _JSD_ZSCORE * jsd_std if jsd_std > 0 else jsd_mean * 1.5
+            
+            peaks = []
+            for i in range(1, len(jsd_scores) - 1):
+                _, jsd, tok_idx = jsd_scores[i]
+                if jsd > jsd_threshold:
+                    _, jsd_prev, _ = jsd_scores[i-1]
+                    _, jsd_next, _ = jsd_scores[i+1]
+                    if jsd >= jsd_prev and jsd >= jsd_next:  # local maximum
+                        peaks.append((tok_idx, jsd))
+            
+            # Enforce minimum gap between peaks (keep strongest)
+            filtered_peaks = []
+            for tok_idx, jsd in peaks:
+                if filtered_peaks and tok_idx - filtered_peaks[-1][0] < _MIN_GAP:
+                    # Keep the stronger peak
+                    if jsd > filtered_peaks[-1][1]:
+                        filtered_peaks[-1] = (tok_idx, jsd)
+                else:
+                    filtered_peaks.append((tok_idx, jsd))
+            
+            for tok_idx, jsd in filtered_peaks:
+                # Map confidence from z-score: z=1→0.55, z=2→0.75, z=3+→0.95
+                z = (jsd - jsd_mean) / jsd_std if jsd_std > 0 else 1.0
+                conf = min(0.95, 0.45 + z * 0.15)
+                kl_boundary_signals.append({
+                    'after_token': max(0, tok_idx - 1),
+                    'type': 'kl_boundary',
+                    'confidence': round(conf, 3),
+                    'kl_value': round(jsd, 4),
+                    'z_score': round(z, 2),
+                    'reason': f'jsd:{jsd:.3f}(z={z:.1f})',
+                })
+    except Exception as e:
+        print(f'KL boundary pass failed: {e}')
+    
     # --- Build speech turns ---
     # Walk segments to assign speaker/turn_id to every token.
     # Speaker segment at token T → all tokens from T+1 until next speaker/heading
@@ -814,7 +915,7 @@ def segment_text(text: str, tokens: list, entity_map: dict) -> list:
             
             turn_id += 1
     
-    return deduped, speaker_map, line_type_map, line_type_conf_map, morph_boundary_signals
+    return deduped, speaker_map, line_type_map, line_type_conf_map, morph_boundary_signals, kl_boundary_signals
 
 
 @app.post("/api/entropy_map")
@@ -982,8 +1083,9 @@ async def entropy_map(req: TensionMapRequest):
         line_type_map = {}
         line_type_conf_map = {}
         morph_boundaries = []
+        kl_boundaries = []
         try:
-            text_segments, speaker_map, line_type_map, line_type_conf_map, morph_boundaries = segment_text(req.text, tokens, entity_map)
+            text_segments, speaker_map, line_type_map, line_type_conf_map, morph_boundaries, kl_boundaries = segment_text(req.text, tokens, entity_map)
         except Exception as e:
             print(f'Segmentation failed: {e}')
         
@@ -1095,6 +1197,7 @@ async def entropy_map(req: TensionMapRequest):
             "plot_arc": plot_arc,
             "segments": text_segments,
             "morph_boundaries": morph_boundaries,
+            "kl_boundaries": kl_boundaries,
         }
     except Exception:
         print(traceback.format_exc()); raise HTTPException(status_code=500, detail="Error")
