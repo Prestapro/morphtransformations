@@ -179,8 +179,8 @@ class NEREngine:
         
         info = self.kb.get_info(token)
         if not info:
-            if low.endswith(('ович', 'евна', 'овна', 'ична')): return {"type": "person", "confidence": 0.95}
-            if low.endswith(('ов', 'ин', 'ский')): return {"type": "person", "confidence": 0.6}
+            if low.endswith(lex.patronymic_suffixes): return {"type": "person", "confidence": 0.95}
+            if low.endswith(lex.surname_suffixes): return {"type": "person", "confidence": 0.6}
             return {"type": "unknown_capitalized", "confidence": 0.3}
         confidence = 0.0; etype = "unknown"; is_animate = False
         for entry in info:
@@ -263,7 +263,7 @@ def _find_last_entity_by_gender(results, current_idx, target_gender, known_speak
                 # get misparsed as femn by inflector
                 name_lower = name.lower()
                 if gender == 'femn':
-                    masc_suffixes = ('ов', 'ев', 'ёв', 'ин', 'ын', 'ский', 'ской', 'цкий', 'цкой', 'ый', 'ой', 'ий')
+                    masc_suffixes = lex.masc_surname_suffixes
                     if any(name_lower.endswith(s) for s in masc_suffixes):
                         gender = 'masc'
                 
@@ -368,9 +368,7 @@ def compute_depth_metrics(tokens_data: list, window_size: int = 15) -> dict:
     
     # === Axis 3: Structural Depth ===
     # Count subordinating signals: relative pronouns, conjunctions, participles
-    subordinators = {'который', 'которая', 'которое', 'которые', 'которого', 'которой',
-                     'что', 'чтобы', 'если', 'хотя', 'когда', 'потому', 'поскольку',
-                     'пока', 'чем', 'где', 'куда', 'откуда', 'насколько', 'ибо'}
+    subordinators = lex.subordinators
     
     n_subordinators = 0
     n_participles = 0
@@ -1767,7 +1765,7 @@ async def entropy_map(req: TensionMapRequest):
                 turn_speech_acts[tid]['exclamation'] = 1.0
             
             # Negation at start of turn: "Нет, ..." → denial
-            if lt == 'TEXT' and r['word'].lower() in ('нет', 'никак', 'нельзя') and i > 0:
+            if lt == 'TEXT' and r['word'].lower() in lex.denial_words and i > 0:
                 prev_lt = results[i-1].get('line_type', '')
                 if prev_lt == 'SPEAKER' or (i > 1 and results[i-2].get('line_type') == 'SPEAKER'):
                     if tid not in turn_speech_acts:
@@ -1779,7 +1777,7 @@ async def entropy_map(req: TensionMapRequest):
                 try:
                     # Strip softening particles: -ка, -ко, -то, -нибудь, -таки
                     word_norm = r['word']
-                    for particle in ('-ка', '-ко', '-то', '-нибудь', '-таки', '-с'):
+                    for particle in lex.clitic_particles:
                         if word_norm.lower().endswith(particle):
                             word_norm = word_norm[:len(word_norm) - len(particle)]
                             break
@@ -1905,20 +1903,20 @@ async def entropy_map(req: TensionMapRequest):
                 continue
             word_lower = r['word'].lower()
             spk = r.get('speaker', '')
-            if word_lower in ('ты', 'тебя', 'тебе', 'тобой', 'тобою', 'вы', 'вас', 'вам', 'вами'):
+            if word_lower in lex.pronouns_2per:
                 resolved = speaker_last_addressee.get(spk)
                 if resolved:
                     r['pronoun_ref'] = resolved
                     r['pronoun_type'] = '2per'
             
             # 3rd person pronouns → last mentioned entity of matching gender
-            elif word_lower in ('он', 'его', 'ему', 'им', 'нём', 'него'):
+            elif word_lower in lex.pronouns_3masc:
                 # Find last mentioned masc entity before this position
                 ref = _find_last_entity_by_gender(results, i, 'masc', known_speaker_names, spk)
                 if ref:
                     r['pronoun_ref'] = ref
                     r['pronoun_type'] = '3per_masc'
-            elif word_lower in ('она', 'её', 'ей', 'ею', 'ней', 'неё'):
+            elif word_lower in lex.pronouns_3fem:
                 ref = _find_last_entity_by_gender(results, i, 'fem', known_speaker_names, spk)
                 if ref:
                     r['pronoun_ref'] = ref

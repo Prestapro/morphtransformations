@@ -430,7 +430,7 @@ subordinators:
 # For NER: patronymic/surname detection, gender correction
 patronymic_suffixes: [ович, евна, овна, ична]
 surname_suffixes:    [ов, ин, ский]
-masc_surname_suffixes: [ов, ев, ёв, ин, ын, ский, ской, цкий, цкой, ий, ой]
+masc_surname_suffixes: [ов, ев, ёв, ин, ын, ский, ской, цкий, цкой, ый, ой, ий]
 
 # === Clitic particles ===
 # Suffixed particles (hyphenated)
