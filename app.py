@@ -1637,6 +1637,17 @@ async def entropy_map(req: TensionMapRequest):
                 block['label'] = seg['reason'].replace('form:', '').strip()
             text_blocks.append(block)
 
+        # Detect dialogue format for routing
+        dialogue_format = 'unknown'
+        try:
+            _dp_dir = str(Path(__file__).parent)
+            if _dp_dir not in sys.path:
+                sys.path.insert(0, _dp_dir)
+            from dialogue_parser import detect_format as dp_detect_format
+            dialogue_format = dp_detect_format(req.text).value
+        except Exception:
+            pass
+        
         return {
             "schema_version": 4,
             "status": "success",
@@ -1644,6 +1655,7 @@ async def entropy_map(req: TensionMapRequest):
             "stylometry": stylometry_result.to_dict(),
             "rhythm": sentence_lengths,
             "genre": detect_genre(req.text),
+            "dialogue_format": dialogue_format,
             "plot_arc": plot_arc,
             "segments": text_segments,
             "morph_boundaries": morph_boundaries,
