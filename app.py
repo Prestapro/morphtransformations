@@ -1662,8 +1662,17 @@ async def entropy_map(req: TensionMapRequest):
                 'diagnostics': diagnostics,
             }
         except Exception as e:
-            print(f'Plot analysis failed: {e}')
-            plot_arc = None
+            import traceback
+            err_msg = f'Plot analysis failed: {type(e).__name__}: {e}'
+            print(err_msg)
+            print(traceback.format_exc())
+            plot_arc = {
+                'beauty_score': 0,
+                'surprise': 0, 'inevitability': 0, 'arc_closure': 1, 'causality': 0,
+                'n_events': 0, 'tensions': [], 'events': [], 'stages': [],
+                'climax_idx': 0,
+                'diagnostics': [{'type': 'error', 'message': f'Ошибка анализа сюжета: {type(e).__name__}', 'severity': 'error'}],
+            }
 
         # --- Structural Segmentation ---
         text_segments = []
@@ -1676,7 +1685,9 @@ async def entropy_map(req: TensionMapRequest):
         try:
             text_segments, speaker_map, line_type_map, line_type_conf_map, morph_boundaries, kl_boundaries, fused_boundaries = segment_text(req.text, tokens, entity_map)
         except Exception as e:
+            import traceback
             print(f'Segmentation failed: {e}')
+            print(traceback.format_exc())
         
         # Inject speaker/turn/line_type into token results
         for i, r in enumerate(results):
@@ -1726,6 +1737,27 @@ async def entropy_map(req: TensionMapRequest):
                             entity_registry[lemma.title()] = {'canonical': canon_from_lemma, 'entity_id': eid}
                 except Exception:
                     pass
+
+        # Also register entities from NER (entity_map) — covers characters
+        # who are mentioned but never speak (e.g. Молчалин in narrative prose)
+        for idx, ent_info in entity_map.items():
+            if ent_info.get('type') == 'person' and ent_info.get('canonical'):
+                canonical = ent_info['canonical']
+                eid = canonical.lower().replace('ё', 'е')
+                if canonical.lower() not in entity_registry:
+                    for variant in (canonical, canonical.lower(), canonical.upper(), canonical.title()):
+                        if variant not in entity_registry:
+                            entity_registry[variant] = {'canonical': canonical, 'entity_id': eid}
+                    # Also try inflector for oblique forms
+                    try:
+                        parses = inflector_analyze(canonical)
+                        if parses:
+                            lemma = getattr(parses[0], 'lemma', None)
+                            if lemma and lemma.lower() not in entity_registry:
+                                entity_registry[lemma] = {'canonical': canonical, 'entity_id': eid}
+                                entity_registry[lemma.title()] = {'canonical': canonical, 'entity_id': eid}
+                    except Exception:
+                        pass
         
         def resolve_entity(word):
             """Resolve word to (canonical_name, entity_id) or (None, None)."""
@@ -1760,7 +1792,7 @@ async def entropy_map(req: TensionMapRequest):
                     # Vocative check: preceded or followed by comma, exclamation
                     prev_word = results[i-1]['word'] if i > 0 else ''
                     next_word = results[i+1]['word'] if i+1 < len(results) else ''
-                    is_vocative = prev_word in ',!;—' or next_word in ',!?;'
+                    is_vocative = (prev_word != '' and prev_word in {',', '!', ';', '—'}) or next_word in {',', '!', '?', ';'}
                     if is_vocative:
                         r['is_addressee'] = True
                         r['addressee_of'] = r.get('speaker', '')
@@ -1778,8 +1810,16 @@ async def entropy_map(req: TensionMapRequest):
                 # Signal 1: rhetorical markers in the question clause
                 rhetorical_markers = lex.rhetorical_markers
                 has_marker = False
-                # Scan backwards from '?' to previous sentence end or turn start
-                for back_j in range(i - 1, max(i - 30, -1), -1):
+                # Scan backwards from '?' to previous sentence boundary or turn start
+                _scan_limit = 0
+                for _bl in range(i - 1, -1, -1):
+                    if results[_bl].get('turn_id') != tid:
+                        _scan_limit = _bl + 1
+                        break
+                    if results[_bl]['word'] in ('.', '!', '?', '…'):
+                        _scan_limit = _bl + 1
+                        break
+                for back_j in range(i - 1, max(_scan_limit - 1, -1), -1):
                     bw = results[back_j]['word'].lower()
                     if bw in ('.', '!', '?', '…'):
                         break
@@ -1805,7 +1845,7 @@ async def entropy_map(req: TensionMapRequest):
                         fw = results[fwd_j]
                         if fw.get('turn_id') != tid:
                             break
-                        if fw['word'] in ('.', '…') and fw.get('line_type') == 'TEXT':
+                        if fw['word'] in ('.', '…', '!') and fw.get('line_type') == 'TEXT':
                             # Found a declarative sentence after the question
                             has_self_response = True
                             break

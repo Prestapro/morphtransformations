@@ -304,6 +304,7 @@
         .arc-legend-dot { width:10px;height:10px;border-radius:2px; }
         .diag-badge { display:inline-flex;align-items:center;gap:4px;padding:3px 8px;border-radius:8px;font-size:10px;font-family:var(--font-mono);margin:2px 4px 2px 0; }
         .diag-warning { background:oklch(0.64 0.2 25 / 18%);color:oklch(0.78 0.14 25); }
+        .diag-error { background:oklch(0.50 0.22 25 / 25%);color:oklch(0.82 0.18 25);font-weight:600; }
         .diag-info { background:oklch(0.55 0.12 250 / 18%);color:oklch(0.72 0.10 250); }
         .beauty-score { font-family:var(--font-mono);font-size:20px;font-weight:600;letter-spacing:-0.5px; }
         .beauty-bar { height:6px;border-radius:3px;background:var(--border);overflow:hidden;margin:4px 0; }
@@ -1338,7 +1339,7 @@
                     if (a.diagnostics && a.diagnostics.length) {
                         diagHtml = '<div style="margin-top:6px">' +
                             a.diagnostics.map(d =>
-                                `<span class="diag-badge diag-${d.severity}">${d.severity==='warning'?'⚠':'ℹ'} ${d.message}</span>`
+                            `<span class="diag-badge diag-${d.severity}">${d.severity==='error'?'❌':d.severity==='warning'?'⚠':'ℹ'} ${d.message}</span>`
                             ).join('') + '</div>';
                     }
                     const stageNames = {exposition:'Экспозиция',rising_action:'Развитие',climax:'Кульминация',falling_action:'Спад',denouement:'Развязка'};
