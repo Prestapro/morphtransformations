@@ -585,8 +585,10 @@ def segment_text(text: str, tokens: list, entity_map: dict) -> list:
         has_parens = '(' in s
         s_stripped = s_bare.rstrip('.')  # allow trailing period
         
-        # Connectives allowed in cast lists (not verbs/adverbs)
-        _CAST_CONNECTIVES = {'и', 'или', 'да', 'с', 'со', 'and', 'or', 'y'}
+        # Connectives and particles allowed in cast lists (not verbs/adverbs)
+        # Patterns: "Те же и Молчалин", "Все, кроме Фамусова", "Те же без Лизы"
+        _CAST_CONNECTIVES = {'и', 'или', 'да', 'с', 'со', 'and', 'or', 'y',
+                             'же', 'те', 'все', 'кроме', 'без', 'потом'}
         
         # Characters line: ≥2 capitalized words, connected by commas/connectives
         # Reject if: has '?', ends with '!' or '…', has too many non-name words

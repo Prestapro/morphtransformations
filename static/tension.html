@@ -778,6 +778,7 @@
     let stylometry = null;  // StylometryResult from backend
     let rhythm = [];        // sentence lengths array
     let genre = 'prose';    // prose / verse_drama / poetry
+    let dialogueFormat = 'unknown'; // drama / prose_em / prose_q / mixed
     let plotArc = null;     // {tensions, stages, events, diagnostics, beauty_score, ...}
     let textSegments = [];  // [{after_token, type, level, reason}] from server
 
@@ -986,6 +987,7 @@
                 stylometry = json.stylometry || null;
                 rhythm = json.rhythm || [];
                 genre = json.genre || 'prose';
+                dialogueFormat = json.dialogue_format || 'unknown';
                 plotArc = json.plot_arc || null;
                 textSegments = json.segments || [];
                 enrichPunctuationOps();
@@ -1272,6 +1274,7 @@
                 <div class="insp-row"><span class="insp-label">Актёров</span><span class="insp-value">${actorList.length}</span></div>
                 <div class="insp-row"><span class="insp-label">Диалоги</span><span class="insp-value">${clips.some(c=>c.isDialogue)?'Да':'Нет'}</span></div>
                 <div class="insp-row"><span class="insp-label">Жанр</span><span class="genre-badge">${genre === 'verse_drama' ? 'Драма в стихах' : genre === 'poetry' ? 'Поэзия' : 'Проза'}</span></div>
+                <div class="insp-row"><span class="insp-label">Формат</span><span class="genre-badge">${dialogueFormat === 'drama' ? 'Пьеса' : dialogueFormat === 'prose_em' ? 'Проза (тире)' : dialogueFormat === 'prose_q' ? 'Проза (кавычки)' : dialogueFormat === 'mixed' ? 'Смешанный' : '—'}</span></div>
                 ${(() => {
                     // Data/Control plane metrics
                     const wordTokens = data.filter(t => t.word[0] && t.word[0].match(/[а-яА-Яa-zA-Z0-9]/));
