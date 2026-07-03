@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Tuple
 from contextlib import contextmanager
+from dialogue_parser import _is_scene_heading, _is_cast_list
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
@@ -497,6 +498,10 @@ def segment_text(text: str, tokens: list, entity_map: dict) -> list:
         words = re.findall(r'[\w]+', s)
         if not words:
             return (None, 0)
+        
+        # ── Scene heading: 'Явление 8', 'Действие первое', 'Пролог' ──
+        if _is_scene_heading(s):
+            return ('heading', 0.98)
         # Allow longer lines if they contain parenthetical stage directions
         max_words = 14 if '(' in s and ')' in s else 8
         if len(words) > max_words:
