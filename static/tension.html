@@ -818,6 +818,18 @@
         const hue = 150 - t * 125;
         return `oklch(${0.68+t*0.02} ${0.14+t*0.06} ${hue} / ${alpha})`;
     }
+    function arousalColor(a, alpha=1) {
+        // 1=calm(blue-green) → 9=excited(red-orange)
+        const t = Math.max(0, Math.min(1, (a - 1) / 8));
+        const hue = 180 - t * 160; // 180 (teal) → 20 (red)
+        return `oklch(${0.60+t*0.12} ${0.12+t*0.10} ${hue} / ${alpha})`;
+    }
+    function concColor(c, alpha=1) {
+        // 1=abstract(violet) → 5=concrete(amber)
+        const t = Math.max(0, Math.min(1, (c - 1) / 4));
+        const hue = 300 - t * 215; // 300 (violet) → 85 (amber)
+        return `oklch(${0.58+t*0.16} ${0.12+t*0.06} ${hue} / ${alpha})`;
+    }
 
     // ── Map token positions back to original text for whitespace recovery ──
     function mapTokenPositions() {
@@ -902,10 +914,13 @@
     }
     function newClip(idx) {
         return { index: idx, tokens: [], wordCount: 0, entropySum: 0, maxEntropy: 0,
-                 sentimentSum: 0, sentimentHits: 0, operators: [], actors: new Set(), isDialogue: false };
+                 sentimentSum: 0, sentimentHits: 0, valSum: 0, valHits: 0,
+                 aroSum: 0, aroHits: 0, concSum: 0, concHits: 0,
+                 operators: [], actors: new Set(), isDialogue: false };
     }
     function finalizeClip(c) {
         let words = 0, eSum = 0, maxE = 0, sSum = 0, sHits = 0;
+        let valSum = 0, valHits = 0, aroSum = 0, aroHits = 0, concSum = 0, concHits = 0;
         const ops = [], actors = new Set();
         let hasDial = false;
         c.tokens.forEach(t => {
@@ -914,6 +929,10 @@
                 const h = t.h || 0.5;
                 eSum += h; maxE = Math.max(maxE, h);
                 if (t.s > 0 || t.s < 0) { sSum += t.s; sHits++; }
+                // Continuous affect norms
+                if (t.val && t.val > 0) { valSum += t.val; valHits++; }
+                if (t.aro && t.aro > 0) { aroSum += t.aro; aroHits++; }
+                if (t.conc && t.conc > 0) { concSum += t.conc; concHits++; }
             }
             if (t.is_operator) ops.push({ kind: t.op_type, word: t.word });
             // Skip structural tokens for actor/dialogue: headings and cast lists
@@ -927,6 +946,9 @@
         c.avgEntropy = words ? eSum / words : 0;
         c.maxEntropy = maxE;
         c.sentiment = sHits ? sSum / Math.max(sHits, 2) : 0;
+        c.avgValence = valHits ? valSum / valHits : 0;
+        c.avgArousal = aroHits ? aroSum / aroHits : 0;
+        c.avgConcreteness = concHits ? concSum / concHits : 0;
         c.operators = ops;
         c.actors = [...actors];
         c.isDialogue = hasDial;
@@ -1247,6 +1269,11 @@
                 <div class="insp-row"><span class="insp-label">Энтропия ср.</span><span class="insp-value" style="color:${entropyColor(clip.avgEntropy)}">${clip.avgEntropy.toFixed(1)}</span></div>
                 <div class="insp-row"><span class="insp-label">Энтропия пик</span><span class="insp-value" style="color:${entropyColor(clip.maxEntropy)}">${clip.maxEntropy.toFixed(1)}</span></div>
                 <div class="insp-row"><span class="insp-label">Сентимент</span><span class="insp-value" style="color:${clip.sentiment>0?'var(--signal-low)':clip.sentiment<0?'var(--signal-high)':'inherit'}">${clip.sentiment>0?'+':''}${clip.sentiment.toFixed(1)}</span></div>
+                ${clip.avgValence ? `
+                <div class="insp-row"><span class="insp-label">Valence</span><span class="insp-value" style="color:${clip.avgValence>6?'var(--signal-low)':clip.avgValence<4?'var(--signal-high)':'var(--text-muted)'}">${clip.avgValence.toFixed(1)}</span></div>
+                <div class="insp-row"><span class="insp-label">Arousal</span><span class="insp-value" style="color:${arousalColor(clip.avgArousal)}">${clip.avgArousal.toFixed(1)}</span></div>
+                <div class="insp-row"><span class="insp-label">Concreteness</span><span class="insp-value" style="color:${concColor(clip.avgConcreteness)}">${clip.avgConcreteness.toFixed(1)}</span></div>
+                ` : ''}
                 <div class="insp-row"><span class="insp-label">Диалог</span><span class="insp-value">${clip.isDialogue?'Да':'Нет'}</span></div>
                 ${opsHtml}${actorsHtml}`;
         } else {
@@ -1357,7 +1384,13 @@
         // Operators
         tracks.push({ id:'operators', label:'Operators', dot:'var(--neon)', h:36 });
         // Sentiment
-        if (hasSentiment) tracks.push({ id:'sentiment', label:'Sentiment', dot:'var(--signal-low)', h:40 });
+        if (hasSentiment) tracks.push({ id:'sentiment', label:'Valence', dot:'var(--signal-low)', h:40 });
+        // Arousal
+        const hasArousal = clips.some(c => c.avgArousal > 0);
+        if (hasArousal) tracks.push({ id:'arousal', label:'Arousal', dot:'oklch(0.68 0.20 15)', h:36 });
+        // Concreteness
+        const hasConcreteness = clips.some(c => c.avgConcreteness > 0);
+        if (hasConcreteness) tracks.push({ id:'concreteness', label:'Concr.', dot:'oklch(0.65 0.18 300)', h:36 });
         // Rhythm
         if (rhythm.length > 1) tracks.push({ id:'rhythm', label:'Rhythm', dot:'oklch(0.75 0.14 60)', h:36 });
         // Actor tracks
@@ -1440,10 +1473,34 @@
                     }
                     case 'sentiment': {
                         html += '<div class="sbar-mid"></div>';
-                        if (clip.sentiment !== 0) {
+                        // Use continuous valence if available, fall back to binary
+                        const val = clip.avgValence || 0;
+                        if (val > 0) {
+                            // Map valence 1-9 to deviation from midpoint (5)
+                            const dev = (val - 5) / 4; // -1 to +1
+                            const pct = Math.abs(dev) * 45;
+                            const isPos = dev > 0;
+                            html += `<div class="sbar" style="height:${pct}%;${isPos?'bottom':'top'}:50%;background:${isPos?'var(--signal-low)':'var(--signal-high)'}" title="val=${val.toFixed(1)}"></div>`;
+                        } else if (clip.sentiment !== 0) {
                             const pct = Math.abs(clip.sentiment) * 45;
                             const isPos = clip.sentiment > 0;
                             html += `<div class="sbar" style="height:${pct}%;${isPos?'bottom':'top'}:50%;background:${isPos?'var(--signal-low)':'var(--signal-high)'}"></div>`;
+                        }
+                        break;
+                    }
+                    case 'arousal': {
+                        const aro = clip.avgArousal;
+                        if (aro > 0) {
+                            const pct = Math.max(8, Math.min(92, ((aro - 1) / 8) * 85));
+                            html += `<div style="position:absolute;bottom:2px;left:2px;right:2px;height:${pct}%;background:${arousalColor(aro, 0.7)};border-radius:2px 2px 0 0;" title="arousal=${aro.toFixed(1)}"></div>`;
+                        }
+                        break;
+                    }
+                    case 'concreteness': {
+                        const conc = clip.avgConcreteness;
+                        if (conc > 0) {
+                            const pct = Math.max(8, Math.min(92, ((conc - 1) / 4) * 85));
+                            html += `<div style="position:absolute;bottom:2px;left:2px;right:2px;height:${pct}%;background:${concColor(conc, 0.7)};border-radius:2px 2px 0 0;" title="conc=${conc.toFixed(1)}"></div>`;
                         }
                         break;
                     }

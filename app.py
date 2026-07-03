@@ -31,6 +31,7 @@ from engine.narrative.plot_analysis import analyze_text as analyze_plot
 from engine.narrative.scene_detector import detect_scene_boundaries
 from engine.reasoning.text_structure import analyze_thematic_progression
 from engine.language.inflector import analyze as inflector_analyze
+from engine.language.affect_lexicon import lookup as affect_lookup, lookup_lemma as affect_lookup_lemma
 from ru_lexicon import lex
 from spike_lexicon import spike_lex
 
@@ -39,7 +40,10 @@ TITLES = lex.titles
 KINSHIP_MARKERS = lex.kinship_markers
 
 # Bootstrap spike lexicon (encodes YAML words → spike vectors, ~300 words)
-spike_lex.bootstrap()
+try:
+    spike_lex.bootstrap()
+except Exception as e:
+    print(f"[WARN] spike_lex.bootstrap() failed: {e} — spike sentiment disabled")
 
 # --- Linguistic Operator Registry ---
 class LinguisticOperatorRegistry:
@@ -167,9 +171,32 @@ class SentimentEngine:
 
     def get_score(self, word: str) -> float:
         w = word.lower()
-        if w in self.pos or spike_lex.is_sentiment_positive(w): return 1.0
-        if w in self.neg or spike_lex.is_sentiment_negative(w): return -1.0
+        try:
+            if w in self.pos or spike_lex.is_sentiment_positive(w): return 1.0
+            if w in self.neg or spike_lex.is_sentiment_negative(w): return -1.0
+        except Exception:
+            # Spike codebook broken — fall back to YAML-only
+            if w in self.pos: return 1.0
+            if w in self.neg: return -1.0
         return 0.0
+
+    def get_affect(self, word: str, lemma: str = '') -> dict:
+        """Return continuous affect norms from the 20K transferred lexicon.
+        Falls back to binary sentiment if word not in affect lexicon."""
+        norms = affect_lookup(word.lower())
+        if not norms and lemma:
+            norms = affect_lookup(lemma.lower())
+        if norms:
+            return {
+                'val': round(norms.valence, 2),
+                'aro': round(norms.arousal, 2),
+                'conc': round(norms.concreteness, 2),
+            }
+        # Fallback: map binary sentiment to valence-like score
+        s = self.get_score(word)
+        if s != 0:
+            return {'val': round(5.0 + s * 2.5, 2), 'aro': 0, 'conc': 0}
+        return {'val': 0, 'aro': 0, 'conc': 0}
 
 # --- NER Engine ---
 class NEREngine:
@@ -1528,9 +1555,11 @@ async def entropy_map(req: TensionMapRequest):
                 elif tok_pos == 'INTJ':
                     tok_service_type = 'interjection'
             
+            affect = sentiment.get_affect(t, tok_lemma)
             tok_dict = {
                 "word": t, "clean": ent['canonical'] if ent else t, "h": h,
                 "s": sentiment.get_score(t),
+                "val": affect['val'], "aro": affect['aro'], "conc": affect['conc'],
                 "pos": tok_pos, "lemma": tok_lemma,
                 "is_entity": ent is not None, "context_role": ent['role'] if ent else "none",
                 "social": ent['social'] if ent else "none",

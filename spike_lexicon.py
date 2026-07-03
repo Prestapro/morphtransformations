@@ -239,10 +239,15 @@ class SpikeLexicon:
             if extra_meta:
                 meta.update(extra_meta)
             
-            # Check if already registered with this category
+            # Check if already registered with this category AND non-zero vector
+            import mlx.core as mx
             existing = self.codebook._meta.get(word, {})
             if existing.get('category') == category:
-                return False
+                # Verify stored vector is not corrupted (all-zeros)
+                stored = self.codebook._entries.get(word)
+                if stored is not None and int(mx.sum(stored != 0)) > 0:
+                    return False
+                # Zero vector: re-register with good vector
             
             # Register (word may have multiple categories → use word:cat as key)
             key = f'{word}:{category}' if word in self.codebook._entries else word
@@ -303,7 +308,11 @@ class SpikeLexicon:
         # Tier 1: Full vector match (finds exact word or close inflection)
         vec = self.encoder.encode_word(word_lower, lemma, grammemes)
         full_vec = mx.array(vec, dtype=mx.float32)
-        matches = self.codebook.recognize(full_vec, top_k=top_k * 3)
+        try:
+            matches = self.codebook.recognize(full_vec, top_k=top_k * 3)
+        except ValueError:
+            # Codebook has corrupted entries with mismatched dimensions
+            return []
         
         cat_scores: dict[str, float] = {}
         
@@ -320,21 +329,23 @@ class SpikeLexicon:
                         'PRTF', 'PRTS', 'GRND'}
         
         if pos in _CONTENT_POS and (not cat_scores or max(cat_scores.values()) < 0.5):
-            # Find all codebook entries with matching POS
-            best_gram_sim = 0.0
-            best_cat = None
-            
+            # Tier 2: POS-filtered full-vector similarity
+            # Within the same POS group, compare full 270d vectors 
+            # (14d gram + 256d lemma hash). Lemma hash discriminates
+            # between different lexical subclasses within a POS.
             gram_vec = mx.array(
                 self.encoder.encode_grammemes(grammemes), dtype=mx.float32
             )
-            g_norm_q = float(mx.linalg.norm(gram_vec))
+            
+            # Collect POS-matching neighbors with full-vector similarity
+            neighbors: list[tuple[str, float]] = []  # (category, full_sim)
             
             for key, entry_vec in self.codebook._entries.items():
                 meta = self.codebook._meta.get(key, {})
                 entry_pos = meta.get('pos', 'UNKN')
                 cat = meta.get('category', 'unknown')
                 
-                # POS group match (verbs match verbs, nouns match nouns)
+                # POS group match
                 pos_match = False
                 if pos in ('VERB', 'INFN', 'GRND', 'PRTF', 'PRTS'):
                     pos_match = entry_pos in ('VERB', 'INFN', 'GRND',
@@ -349,20 +360,37 @@ class SpikeLexicon:
                 if not pos_match:
                     continue
                 
-                # Gram cosine similarity
-                entry_gram = entry_vec[:14].astype(mx.float32)
-                g_norm_e = float(mx.linalg.norm(entry_gram))
+                # Full 270d cosine similarity (gram 14d + lemma 256d)
+                e_vec = entry_vec.astype(mx.float32)
+                e_norm = float(mx.linalg.norm(e_vec))
+                q_norm = float(mx.linalg.norm(full_vec))
                 
-                if g_norm_q > 1e-6 and g_norm_e > 1e-6:
-                    gsim = float(mx.sum(gram_vec * entry_gram)) / (g_norm_q * g_norm_e)
+                if q_norm > 1e-6 and e_norm > 1e-6:
+                    sim = float(mx.sum(full_vec * e_vec)) / (q_norm * e_norm)
                 else:
-                    gsim = 0.0
+                    sim = 0.0
                 
-                # POS match adds base confidence
-                score = 0.3 + gsim * 0.4  # 0.3 base + up to 0.4 from gram
+                if sim > 0.3:
+                    neighbors.append((cat, sim))
+            
+            # Take top-k neighbors and check category consistency
+            if len(neighbors) >= 3:
+                neighbors.sort(key=lambda x: -x[1])
+                top_n = neighbors[:min(7, len(neighbors))]
                 
-                if score > cat_scores.get(cat, 0):
-                    cat_scores[cat] = score
+                cat_counts: dict[str, int] = {}
+                cat_best_sim: dict[str, float] = {}
+                for cat, sim in top_n:
+                    cat_counts[cat] = cat_counts.get(cat, 0) + 1
+                    cat_best_sim[cat] = max(cat_best_sim.get(cat, 0), sim)
+                
+                for cat, count in cat_counts.items():
+                    ratio = count / len(top_n)
+                    # Require majority AND decent similarity
+                    if ratio >= 0.5 and cat_best_sim[cat] > 0.4:
+                        score = 0.25 + cat_best_sim[cat] * 0.35 * ratio
+                        if score > cat_scores.get(cat, 0):
+                            cat_scores[cat] = score
         
         result = sorted(cat_scores.items(), key=lambda x: -x[1])[:top_k]
         
