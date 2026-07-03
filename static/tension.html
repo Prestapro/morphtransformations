@@ -42,6 +42,10 @@
             --actor-2: oklch(0.68 0.17 250);
             --actor-3: oklch(0.72 0.17 150);
             --actor-4: oklch(0.64 0.2 25);
+            --actor-5: oklch(0.65 0.18 300);
+            --actor-6: oklch(0.72 0.16 55);
+            --actor-7: oklch(0.70 0.14 185);
+            --actor-8: oklch(0.68 0.18 340);
         }
 
         *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -747,8 +751,8 @@
        API: POST /api/entropy_map → { data: Token[] }
        ═══════════════════════════════════════════════════ */
 
-    const ACTOR_COLORS = ['var(--actor-1)','var(--actor-2)','var(--actor-3)','var(--actor-4)'];
-    const ACTOR_HEX = ['#c9a832','#5b8def','#4ade80','#f87171'];
+    const ACTOR_COLORS = ['var(--actor-1)','var(--actor-2)','var(--actor-3)','var(--actor-4)','var(--actor-5)','var(--actor-6)','var(--actor-7)','var(--actor-8)'];
+    const ACTOR_HEX = ['#c9a832','#5b8def','#4ade80','#f87171','#a78bfa','#fb923c','#2dd4bf','#f472b6'];
     const OP_SYM = { contrast:'↔', emphasis:'↑', hedge:'?', logic:'§', modal:'◊', amplifier:'!', inversion:'¿', parenthetical:'—' };
     const OP_LABEL = { contrast:'Contrast', emphasis:'Emphasis', hedge:'Hedge', logic:'Logic', modal:'Modality', amplifier:'Amplifier', inversion:'Inversion', parenthetical:'Parenthetical' };
     const OP_COLOR = {
@@ -876,19 +880,23 @@
         });
         if (clip.tokens.length) { finalizeClip(clip); clips.push(clip); }
 
-        // Actors
+        // Actors — combine entity detection + speaker metadata
         const counts = {};
         data.forEach(t => {
             if (t.is_entity && t.confidence >= 0.6) {
                 counts[t.clean] = (counts[t.clean] || 0) + 1;
+            }
+            // Also count speaker names (these come from structural detection)
+            if (t.speaker) {
+                counts[t.speaker] = (counts[t.speaker] || 0) + 1;
             }
         });
         actorList = Object.entries(counts)
             .map(([name, count]) => ({ name, count }))
             .sort((a, b) => b.count - a.count);
         actorColorMap = {};
-        actorList.slice(0, 4).forEach((a, i) => {
-            actorColorMap[a.name] = { css: ACTOR_COLORS[i], hex: ACTOR_HEX[i] };
+        actorList.slice(0, 8).forEach((a, i) => {
+            actorColorMap[a.name] = { css: ACTOR_COLORS[i % ACTOR_COLORS.length], hex: ACTOR_HEX[i % ACTOR_HEX.length] };
         });
     }
     function newClip(idx) {
@@ -1153,30 +1161,46 @@
                 }
                 if (inCharsLine) { inner += '</span>'; inCharsLine = false; }
 
+                // Determine turn tint (background for the entire turn)
+                let turnBg = '';
+                let turnCls = '';
+                let turnTitle = '';
+                if (t.speaker && actorColorMap[t.speaker]) {
+                    const tc = actorColorMap[t.speaker];
+                    turnBg = 'background:' + tc.css.replace(')', ' / 0.08)') + ';';
+                    turnCls = 'tok-turn';
+                    turnTitle = t.speaker;
+                }
+
                 const isWord = t.word[0] && t.word[0].match(/[а-яА-Яa-zA-Z0-9]/);
+                
+                // Build inner content (text styling)
+                let wordHtml = '';
                 if (!isWord && t.is_operator) {
                     const opc = OP_COLOR[t.op_type] || 'var(--primary)';
-                    inner += `<span class="tok-operator" style="color:${opc};" title="${OP_LABEL[t.op_type]||t.op_type}">${escHtml(t.word)}</span>`;
-                    return;
-                }
-                if (!isWord) { inner += escHtml(t.word); return; }
-                if (t.is_operator) {
+                    wordHtml = '<span class="tok-operator" style="color:' + opc + ';" title="' + (OP_LABEL[t.op_type]||t.op_type) + '">' + escHtml(t.word) + '</span>';
+                } else if (!isWord) {
+                    wordHtml = escHtml(t.word);
+                } else if (t.is_operator) {
                     const opc = OP_COLOR[t.op_type] || 'var(--primary)';
-                    inner += `<span class="tok-operator" style="color:${opc};background:${opc.replace(')', ' / 12%)')};" title="Оператор: ${OP_LABEL[t.op_type]||t.op_type}">${escHtml(t.word)}</span>`;
+                    wordHtml = '<span class="tok-operator" style="color:' + opc + ';background:' + opc.replace(')', ' / 12%)') + ';" title="' + (OP_LABEL[t.op_type]||t.op_type) + '">' + escHtml(t.word) + '</span>';
                 } else if (t.is_entity && t.confidence >= 0.6) {
-                    const c = actorColorMap[t.clean];
-                    const color = c ? c.css : 'var(--text)';
-                    inner += `<span class="tok-actor" style="color:${color}" title="Актёр: ${t.clean}">${escHtml(t.word)}</span>`;
-                } else if (t.speaker && actorColorMap[t.speaker]) {
-                    const c = actorColorMap[t.speaker];
-                    const tint = c.css.replace(')', ' / 0.08)').replace('hsl(', 'hsla(').replace('rgb(', 'rgba(');
-                    inner += `<span class="tok-turn" style="background:${tint}" title="Реплика: ${t.speaker}" data-turn="${t.turn_id}">${escHtml(t.word)}</span>`;
+                    const ec = actorColorMap[t.clean];
+                    const color = ec ? ec.css : 'var(--text)';
+                    wordHtml = '<span class="tok-actor" style="color:' + color + '" title="' + t.clean + '">' + escHtml(t.word) + '</span>';
                 } else if ((t.h || 0) >= 5) {
-                    inner += `<span class="tok-entropy-high" title="H=${(t.h||0).toFixed(2)}">${escHtml(t.word)}</span>`;
+                    wordHtml = '<span class="tok-entropy-high" title="H=' + (t.h||0).toFixed(2) + '">' + escHtml(t.word) + '</span>';
                 } else if ((t.h || 0) >= 3) {
-                    inner += `<span class="tok-entropy-mid" title="H=${(t.h||0).toFixed(2)}">${escHtml(t.word)}</span>`;
+                    wordHtml = '<span class="tok-entropy-mid" title="H=' + (t.h||0).toFixed(2) + '">' + escHtml(t.word) + '</span>';
                 } else {
-                    inner += escHtml(t.word);
+                    wordHtml = escHtml(t.word);
+                }
+
+                // Wrap in turn span if speaker assigned
+                if (turnCls) {
+                    inner += '<span class="' + turnCls + '" style="' + turnBg + '" title="' + turnTitle + '" data-turn="' + t.turn_id + '">' + wordHtml + '</span>';
+                } else {
+                    inner += wordHtml;
                 }
             });
             if (inStageDir) inner += '</span>';
