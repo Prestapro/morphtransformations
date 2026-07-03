@@ -859,6 +859,51 @@ def segment_text(text: str, tokens: list, entity_map: dict) -> list:
     except Exception as e:
         print(f'KL boundary pass failed: {e}')
     
+    # --- Pass 5: Evidence fusion ---
+    # Combine all 3 detectors into unified boundary_evidence.
+    # When multiple detectors agree at the same position (±2 tokens),
+    # fuse their confidences: 1 - Π(1 - ci) (Noisy-OR).
+    boundary_evidence = {}  # token_idx → {sources: [...], fused_confidence: float}
+    
+    # Collect all signals by position (structural boundaries from segments)
+    all_signals = []
+    for s in deduped:
+        if s['type'] == 'speaker':
+            all_signals.append(('structural', s['after_token'], s.get('confidence', 0.9)))
+    for mb in morph_boundary_signals:
+        all_signals.append(('morph', mb['after_token'], mb['confidence']))
+    for kb in kl_boundary_signals:
+        all_signals.append(('jsd', kb['after_token'], kb['confidence']))
+    
+    # Group by position (±2 tokens = same boundary)
+    for source, pos, conf in sorted(all_signals, key=lambda x: x[1]):
+        # Find if there's already a boundary within ±2 tokens
+        matched = None
+        for existing_pos in boundary_evidence:
+            if abs(existing_pos - pos) <= 2:
+                matched = existing_pos
+                break
+        
+        if matched is not None:
+            be = boundary_evidence[matched]
+            be['sources'].append({'type': source, 'position': pos, 'confidence': conf})
+            # Noisy-OR fusion: P(boundary) = 1 - Π(1 - ci)
+            be['fused_confidence'] = 1.0 - (1.0 - be['fused_confidence']) * (1.0 - conf)
+        else:
+            boundary_evidence[pos] = {
+                'after_token': pos,
+                'sources': [{'type': source, 'position': pos, 'confidence': conf}],
+                'fused_confidence': conf,
+                'n_detectors': 0,  # filled below
+            }
+    
+    # Count unique detector types and mark consensus
+    for pos, be in boundary_evidence.items():
+        detector_types = set(s['type'] for s in be['sources'])
+        be['n_detectors'] = len(detector_types)
+        be['detector_types'] = list(detector_types)
+        be['consensus'] = len(detector_types) >= 2  # 2+ detectors agree
+    
     # --- Build speech turns ---
     # Walk segments to assign speaker/turn_id to every token.
     # Speaker segment at token T → all tokens from T+1 until next speaker/heading
@@ -915,7 +960,7 @@ def segment_text(text: str, tokens: list, entity_map: dict) -> list:
             
             turn_id += 1
     
-    return deduped, speaker_map, line_type_map, line_type_conf_map, morph_boundary_signals, kl_boundary_signals
+    return deduped, speaker_map, line_type_map, line_type_conf_map, morph_boundary_signals, kl_boundary_signals, boundary_evidence
 
 
 @app.post("/api/entropy_map")
@@ -1084,8 +1129,9 @@ async def entropy_map(req: TensionMapRequest):
         line_type_conf_map = {}
         morph_boundaries = []
         kl_boundaries = []
+        fused_boundaries = {}
         try:
-            text_segments, speaker_map, line_type_map, line_type_conf_map, morph_boundaries, kl_boundaries = segment_text(req.text, tokens, entity_map)
+            text_segments, speaker_map, line_type_map, line_type_conf_map, morph_boundaries, kl_boundaries, fused_boundaries = segment_text(req.text, tokens, entity_map)
         except Exception as e:
             print(f'Segmentation failed: {e}')
         
@@ -1198,6 +1244,7 @@ async def entropy_map(req: TensionMapRequest):
             "segments": text_segments,
             "morph_boundaries": morph_boundaries,
             "kl_boundaries": kl_boundaries,
+            "boundary_evidence": list(fused_boundaries.values()),
         }
     except Exception:
         print(traceback.format_exc()); raise HTTPException(status_code=500, detail="Error")
