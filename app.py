@@ -263,10 +263,10 @@ def segment_text(text: str, tokens: list, entity_map: dict) -> list:
         # ── Stage direction: starts with ( ──
         # Covers "(входит стремительно)", "(aside)", "(Тушит свечу.)"
         if s.startswith('(') and (s.endswith(')') or s.endswith(').') or ')' in s):
-            return ('stage_direction', 0)
+            return ('stage_direction', 0.99)  # bracketed = unambiguous
         # Standalone closing paren from multi-line stage direction
         if s == ')':
-            return ('stage_direction', 0)
+            return ('stage_direction', 0.95)  # closing paren
         
         # Below this: only short lines (≤80 chars, ≤8 words)
         if len(s) > 80:
@@ -277,7 +277,7 @@ def segment_text(text: str, tokens: list, entity_map: dict) -> list:
         
         # ── Speaker with colon: "ФАМУСОВ:" or "Charles:" ──
         if s.endswith(':') and len(words) <= 3:
-            return ('speaker', 2)
+            return ('speaker', 0.95)  # has explicit colon
         
         # ── Unbracketed stage directions inside turns ──
         # "Обнимаются.", "Садятся.", "Молчание.", "Уходит." — no parentheses
@@ -306,7 +306,7 @@ def segment_text(text: str, tokens: list, entity_map: dict) -> list:
             }
             lower_set = {w.lower().rstrip('.') for w in words}
             if is_stage_verb or (lower_set & _STAGE_NOUNS):
-                return ('stage_direction', 0)
+                return ('stage_direction', 0.85)  # inflector: VERB+3per or stage noun
         
         has_numeral = bool(re.search(r'\d+|[IVXLC]{1,6}$', s))
         all_caps = s.rstrip(':') == s.rstrip(':').upper() and any(c.isalpha() for c in s)
@@ -325,7 +325,7 @@ def segment_text(text: str, tokens: list, entity_map: dict) -> list:
         # Single CAPS word = speaker (ФАМУСОВ)
         if (all_caps and len(words) == 1 and not has_numeral 
                 and not ends_with_punct and not has_bad_punct):
-            return ('speaker', 2)
+            return ('speaker', 0.95 if prev_blank else 0.85)  # CAPS word
         
         # Single Title Case word = speaker (Чацкий, Sofia, Молчалин)
         # Next line must exist and be either text or stage direction
@@ -334,7 +334,7 @@ def segment_text(text: str, tokens: list, entity_map: dict) -> list:
                 and words[0][0].isupper()
                 and next_line
                 and (next_line.startswith('(') or len(next_line.split()) > 1 or next_line != next_line.strip().title())):
-            return ('speaker', 2)
+            return ('speaker', 0.90 if prev_blank else 0.80)  # Title Case, needs next_line
         
         # Must be preceded by blank line for remaining structural markers
         # (headings, characters_line — these require more context)
@@ -348,16 +348,16 @@ def segment_text(text: str, tokens: list, entity_map: dict) -> list:
         if (len(cap_words) >= 2 and not ends_with_punct and not has_numeral 
                 and 2 <= len(alpha_words) <= 6 and not all_caps
                 and lower_words):
-            return ('characters_line', 2)
+            return ('characters_line', 0.85)  # names with connectives
         
         # ── Multi-word CAPS or CAPS+numeral = structural heading ──
         if all_caps and (len(words) >= 2 or has_numeral) and not ends_with_punct:
-            return ('heading', 3)
+            return ('heading', 0.95)  # multi-word CAPS
         
         # ── Title Case + numeral = structural heading (Chapter 3, Явление 10) ──
         # Single capitalized word + numeral counts (not just multi-word Title Case)
         if has_numeral and not ends_with_punct and alpha_words and all(w[0].isupper() for w in alpha_words):
-            return ('heading', 3)
+            return ('heading', 0.90)  # Title Case + numeral
         
         return (None, 0)
     
@@ -392,6 +392,7 @@ def segment_text(text: str, tokens: list, entity_map: dict) -> list:
     lines = text.split('\n')
     line_start_token = 0
     line_type_map = {}  # token_index → line_type (HEADER|SPEAKER|STAGE_DIRECTION|CHARACTERS_LINE|TEXT)
+    line_type_conf_map = {}  # token_index → confidence (0.0-1.0) from _classify_line
     prev_blank = True  # start of text counts as preceded by blank
     for li, line in enumerate(lines):
         stripped = line.strip()
@@ -400,24 +401,30 @@ def segment_text(text: str, tokens: list, entity_map: dict) -> list:
             continue
         
         next_line = lines[li + 1].strip() if li + 1 < len(lines) else ''
-        ltype, llevel = _classify_line(stripped, prev_blank, next_line)
+        ltype, lconf = _classify_line(stripped, prev_blank, next_line)
         
         line_tok_count = len(re.findall(r'[\w-]+|[^\w\s]', stripped))
         
         # Map line_type for all tokens on this line
         lt = 'TEXT'
+        lt_conf = 0.5  # default for TEXT
         if ltype == 'heading':
             lt = 'HEADER'
+            lt_conf = lconf
         elif ltype == 'speaker':
             lt = 'SPEAKER'
+            lt_conf = lconf
         elif ltype == 'stage_direction':
             lt = 'STAGE_DIRECTION'
+            lt_conf = lconf
         elif ltype == 'characters_line':
             lt = 'CHARACTERS_LINE'
+            lt_conf = lconf
         
         for ti in range(line_start_token, line_start_token + line_tok_count):
             if ti < len(tokens):
                 line_type_map[ti] = lt
+                line_type_conf_map[ti] = lt_conf
         
         # Detect inline stage directions: tokens inside () within TEXT lines
         if lt == 'TEXT':
@@ -440,7 +447,8 @@ def segment_text(text: str, tokens: list, entity_map: dict) -> list:
                         segments.append({
                             'after_token': max(0, ti - 1),
                             'type': ltype,
-                            'level': llevel,
+                            'level': int(lconf * 3) if ltype == 'heading' else int(lconf * 2),  # legacy compat
+                            'confidence': lconf,
                             'reason': f'form:{stripped[:40]}'
                         })
                         break
@@ -729,16 +737,18 @@ def segment_text(text: str, tokens: list, entity_map: dict) -> list:
             else:
                 end_tok = len(tokens)
             
+            # Get confidence from speaker line classification
+            spk_conf = line_type_conf_map.get(speaker_tok, 0.8)
             # Mark the speaker name token
-            speaker_map[speaker_tok] = {'speaker': speaker_name, 'turn_id': turn_id, 'is_speaker_label': True}
+            speaker_map[speaker_tok] = {'speaker': speaker_name, 'turn_id': turn_id, 'is_speaker_label': True, 'speaker_confidence': spk_conf}
             # Mark all tokens in this turn (skip HEADER tokens, start after speaker token)
             for ti in range(speaker_tok + 1, end_tok):
                 if line_type_map.get(ti) != 'HEADER':
-                    speaker_map[ti] = {'speaker': speaker_name, 'turn_id': turn_id, 'is_speaker_label': False}
+                    speaker_map[ti] = {'speaker': speaker_name, 'turn_id': turn_id, 'is_speaker_label': False, 'speaker_confidence': spk_conf}
             
             turn_id += 1
     
-    return deduped, speaker_map, line_type_map
+    return deduped, speaker_map, line_type_map, line_type_conf_map
 
 
 @app.post("/api/entropy_map")
@@ -904,8 +914,9 @@ async def entropy_map(req: TensionMapRequest):
         text_segments = []
         speaker_map = {}
         line_type_map = {}
+        line_type_conf_map = {}
         try:
-            text_segments, speaker_map, line_type_map = segment_text(req.text, tokens, entity_map)
+            text_segments, speaker_map, line_type_map, line_type_conf_map = segment_text(req.text, tokens, entity_map)
         except Exception as e:
             print(f'Segmentation failed: {e}')
         
@@ -915,7 +926,9 @@ async def entropy_map(req: TensionMapRequest):
             if si:
                 r['speaker'] = si['speaker']
                 r['turn_id'] = si['turn_id']
+                r['speaker_confidence'] = si.get('speaker_confidence', 0.9)
             r['line_type'] = line_type_map.get(i, 'TEXT')
+            r['line_type_confidence'] = line_type_conf_map.get(i, 0.5)
         
         # Inherit speaker for orphan STAGE_DIRECTION tokens (e.g., trailing '.' after 'Садятся')
         for i, r in enumerate(results):
