@@ -1603,20 +1603,29 @@ async def entropy_map(req: TensionMapRequest):
             pr = analyze_plot(req.text)
             tensions = pr.detail.get('tensions', [])
             n = len(tensions)
-            climax_idx = max(range(n), key=lambda i: tensions[i]) if n else 0
+            climax_idx = 0
+            if n:
+                peak = max(tensions)
+                # Use LAST occurrence of peak to handle plateau climaxes
+                for ii in range(n):
+                    if tensions[ii] == peak:
+                        climax_idx = ii
             # Segment into Freytag zones
             stages = []
             if n > 0:
+                peak_val = max(tensions) if tensions else 0
                 for i in range(n):
                     pos = i / max(n - 1, 1)
-                    if i < climax_idx:
+                    if tensions[i] == peak_val and i >= climax_idx * 0.8:
+                        # All events at peak tension level are climax
+                        # (handles plateau where multiple events share max)
+                        stages.append('climax')
+                    elif i < climax_idx:
                         # Pre-climax: exposition vs rising
                         if tensions[i] < 0.2 and i < n * 0.3:
                             stages.append('exposition')
                         else:
                             stages.append('rising_action')
-                    elif i == climax_idx:
-                        stages.append('climax')
                     else:
                         # Post-climax: falling vs denouement
                         if i > n * 0.85:
