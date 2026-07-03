@@ -1233,6 +1233,127 @@ async def entropy_map(req: TensionMapRequest):
                     r['turn_addressees'] = list(turn_addressees[tid])
                 if tid in turn_speech_acts:
                     r['speech_acts'] = turn_speech_acts[tid]  # dict {act: confidence}
+        
+        # --- Turn-pair linking ---
+        # Link question turns to their answers: turn N (?) → turn N+1
+        turn_pairs = []  # [{question_turn, answer_turn, type}]
+        # Build turn_id → info map
+        turn_info = {}  # turn_id → {speaker, start_tok, end_tok, speech_acts}
+        for i, r in enumerate(results):
+            tid = r.get('turn_id')
+            if tid is None:
+                continue
+            if tid not in turn_info:
+                turn_info[tid] = {
+                    'speaker': r.get('speaker', ''),
+                    'start_tok': i,
+                    'end_tok': i,
+                    'speech_acts': r.get('speech_acts', {}),
+                }
+            else:
+                turn_info[tid]['end_tok'] = i
+                if r.get('speech_acts'):
+                    turn_info[tid]['speech_acts'].update(r['speech_acts'])
+        
+        sorted_turns = sorted(turn_info.keys())
+        for j in range(len(sorted_turns) - 1):
+            t_curr = sorted_turns[j]
+            t_next = sorted_turns[j + 1]
+            curr_acts = turn_info[t_curr].get('speech_acts', {})
+            next_acts = turn_info[t_next].get('speech_acts', {})
+            
+            # Question → Answer
+            if 'question' in curr_acts:
+                pair_type = 'question_answer'
+                if 'denial' in next_acts:
+                    pair_type = 'question_denial'
+                turn_pairs.append({
+                    'source_turn': t_curr,
+                    'target_turn': t_next,
+                    'type': pair_type,
+                    'source_speaker': turn_info[t_curr]['speaker'],
+                    'target_speaker': turn_info[t_next]['speaker'],
+                })
+            # Command → Response
+            elif 'command' in curr_acts:
+                turn_pairs.append({
+                    'source_turn': t_curr,
+                    'target_turn': t_next,
+                    'type': 'command_response',
+                    'source_speaker': turn_info[t_curr]['speaker'],
+                    'target_speaker': turn_info[t_next]['speaker'],
+                })
+            # Exclamation → Reaction (weaker link)
+            elif 'exclamation' in curr_acts and turn_info[t_curr]['speaker'] != turn_info[t_next]['speaker']:
+                turn_pairs.append({
+                    'source_turn': t_curr,
+                    'target_turn': t_next,
+                    'type': 'exclamation_reaction',
+                    'source_speaker': turn_info[t_curr]['speaker'],
+                    'target_speaker': turn_info[t_next]['speaker'],
+                })
+        
+        # --- Cross-turn pronoun coreference ---
+        # ты/вы → last detected addressee for this speaker
+        speaker_last_addressee = {}  # speaker_name → addressee_name
+        for tp in turn_pairs:
+            speaker_last_addressee[tp['source_speaker']] = tp['target_speaker']
+            speaker_last_addressee[tp['target_speaker']] = tp['source_speaker']
+        
+        # Also from vocative addressees
+        for tid, addrs in turn_addressees.items():
+            if tid in turn_info:
+                spk = turn_info[tid]['speaker']
+                for addr in addrs:
+                    speaker_last_addressee[spk] = addr
+        
+        # Inject resolved pronouns
+        for i, r in enumerate(results):
+            if r.get('line_type') != 'TEXT':
+                continue
+            word_lower = r['word'].lower()
+            spk = r.get('speaker', '')
+            if word_lower in ('ты', 'тебя', 'тебе', 'тобой', 'тобою', 'вы', 'вас', 'вам', 'вами'):
+                resolved = speaker_last_addressee.get(spk)
+                if resolved:
+                    r['pronoun_ref'] = resolved
+                    r['pronoun_type'] = '2per'
+        
+        # --- Build dialogue_turns[] ---
+        dialogue_turns = []
+        for tid in sorted_turns:
+            ti = turn_info[tid]
+            # Collect TEXT-only words for utterance_content
+            text_words = []
+            for idx in range(ti['start_tok'], ti['end_tok'] + 1):
+                if idx < len(results):
+                    tok_r = results[idx]
+                    if tok_r.get('line_type') in ('TEXT',):
+                        text_words.append(tok_r['word'])
+            
+            dt = {
+                'turn_id': tid,
+                'speaker': ti['speaker'],
+                'start_token': ti['start_tok'],
+                'end_token': ti['end_tok'],
+                'text': ' '.join(text_words),
+                'speech_acts': ti['speech_acts'],
+            }
+            if tid in turn_addressees:
+                dt['addressees'] = list(turn_addressees[tid])
+            dialogue_turns.append(dt)
+        
+        # --- Build text_blocks[] ---
+        text_blocks = []
+        for seg in text_segments:
+            block = {
+                'type': seg['type'],  # heading, speaker, stage_direction, characters_line
+                'after_token': seg['after_token'],
+                'confidence': seg.get('confidence', 0.0),
+            }
+            if seg.get('reason'):
+                block['label'] = seg['reason'].replace('form:', '').strip()
+            text_blocks.append(block)
 
         return {
             "status": "success",
@@ -1245,6 +1366,9 @@ async def entropy_map(req: TensionMapRequest):
             "morph_boundaries": morph_boundaries,
             "kl_boundaries": kl_boundaries,
             "boundary_evidence": list(fused_boundaries.values()),
+            "turn_pairs": turn_pairs,
+            "dialogue_turns": dialogue_turns,
+            "text_blocks": text_blocks,
         }
     except Exception:
         print(traceback.format_exc()); raise HTTPException(status_code=500, detail="Error")
