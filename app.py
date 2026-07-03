@@ -246,6 +246,13 @@ def _find_last_entity_by_gender(results, current_idx, target_gender, known_speak
             name = r['word']
         elif r.get('line_type') == 'SPEAKER':
             name = r['word']
+        # Capitalized word in TEXT context → likely proper noun (entity candidate)
+        elif (r.get('line_type') == 'TEXT' and r['word'][0:1].isupper() 
+              and len(r['word']) > 1 and r['word'][1:].islower()
+              and r['word'].isalpha()):
+            # Exclude sentence-initial words (preceded by sentence-ending punct)
+            if j > 0 and results[j-1]['word'] not in ('.', '!', '?', '…'):
+                name = r['word']
         
         if not name or name == current_speaker or ' ' in name:
             continue
@@ -1578,6 +1585,7 @@ async def entropy_map(req: TensionMapRequest):
             curr_seg_type = None
             curr_seg_words = []
             curr_seg_start = None
+            current_quote_subtype = 'embedded_quote'
             in_quote = False
             for idx in range(ti['start_tok'], ti['end_tok'] + 1):
                 if idx >= len(results):
@@ -1588,6 +1596,44 @@ async def entropy_map(req: TensionMapRequest):
                 # Track embedded quotes: «...»
                 if tok_r['word'] == '«':
                     in_quote = True
+                    # Sub-classify the quote by preceding context
+                    # Look back up to 3 tokens for classification signals
+                    quote_subtype = 'embedded_quote'  # default
+                    prev_words = []
+                    for back in range(1, min(4, idx + 1)):
+                        pw = results[idx - back]['word'].lower() if idx - back >= 0 else ''
+                        if pw == ':':  # skip colon (сказал: «...»)
+                            continue
+                        prev_words.append(pw)
+                    prev_lemmas = set()
+                    for pw in prev_words:
+                        if pw:
+                            try:
+                                parses = inflector_analyze(pw)
+                                for p in parses:
+                                    prev_lemmas.add(getattr(p, 'lemma', pw))
+                            except Exception:
+                                prev_lemmas.add(pw)
+                    
+                    # Title: preceded by work-type nouns
+                    title_signals = {'роман', 'книга', 'повесть', 'рассказ', 'поэма', 
+                                     'пьеса', 'комедия', 'трагедия', 'опера', 'балет',
+                                     'стихотворение', 'басня', 'песня', 'глава', 'статья',
+                                     'называться', 'назвать', 'озаглавить', 'написать'}
+                    if prev_lemmas & title_signals:
+                        quote_subtype = 'title'
+                    # Embedded speech: preceded by speech verbs
+                    elif prev_lemmas & {'сказать', 'говорить', 'ответить', 'спросить',
+                                         'крикнуть', 'шептать', 'произнести', 'добавить',
+                                         'заметить', 'воскликнуть', 'прошептать',
+                                         'промолвить', 'молвить', 'возразить'}:
+                        quote_subtype = 'embedded_speech'
+                    # Ironic: preceded by meta-markers
+                    elif any(w in prev_words for w in ['называемый', 'называемая', 
+                             'называемое', 'называемые', 'якобы', 'мнимый', 'мнимая']):
+                        quote_subtype = 'ironic'
+                    
+                    current_quote_subtype = quote_subtype
                 elif tok_r['word'] == '»':
                     in_quote = False
                 
@@ -1598,7 +1644,7 @@ async def entropy_map(req: TensionMapRequest):
                 elif tok_lt == 'SPEAKER':
                     seg_type = 'speaker_label'
                 elif in_quote and tok_lt == 'TEXT':
-                    seg_type = 'embedded_quote'
+                    seg_type = current_quote_subtype
                 
                 if seg_type != curr_seg_type:
                     if curr_seg_type and curr_seg_words:
