@@ -1950,6 +1950,14 @@ async def entropy_map(req: TensionMapRequest):
             
             # Question → Answer
             if 'question' in curr_acts:
+                # Skip if this is a rhetorical question (already detected)
+                if curr_acts.get('rhetorical_question', 0) >= 0.5:
+                    continue
+                # Skip if same speaker (monologue split by authorial remark)
+                curr_speaker = turn_info[t_curr]['speaker']
+                next_speaker = turn_info[t_next]['speaker']
+                if curr_speaker and next_speaker and curr_speaker == next_speaker:
+                    continue
                 pair_type = 'question_answer'
                 if 'denial' in next_acts:
                     pair_type = 'question_denial'
@@ -1957,17 +1965,21 @@ async def entropy_map(req: TensionMapRequest):
                     'source_turn': t_curr,
                     'target_turn': t_next,
                     'type': pair_type,
-                    'source_speaker': turn_info[t_curr]['speaker'],
-                    'target_speaker': turn_info[t_next]['speaker'],
+                    'source_speaker': curr_speaker,
+                    'target_speaker': next_speaker,
                 })
-            # Command → Response
+            # Command → Response (also requires different speaker)
             elif 'command' in curr_acts:
+                curr_speaker = turn_info[t_curr]['speaker']
+                next_speaker = turn_info[t_next]['speaker']
+                if curr_speaker and next_speaker and curr_speaker == next_speaker:
+                    continue
                 turn_pairs.append({
                     'source_turn': t_curr,
                     'target_turn': t_next,
                     'type': 'command_response',
-                    'source_speaker': turn_info[t_curr]['speaker'],
-                    'target_speaker': turn_info[t_next]['speaker'],
+                    'source_speaker': curr_speaker,
+                    'target_speaker': next_speaker,
                 })
             # Exclamation → Reaction (weaker link)
             elif 'exclamation' in curr_acts and turn_info[t_curr]['speaker'] != turn_info[t_next]['speaker']:
