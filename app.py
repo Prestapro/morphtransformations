@@ -692,6 +692,72 @@ def segment_text(text: str, tokens: list, entity_map: dict) -> list:
             deduped.append(s)
             seen_positions.add(s['after_token'])
     
+    # --- Pass 3: Morphological boundary signals ---
+    # Detect person/number shifts between consecutive TEXT lines via inflector.
+    # These are EVIDENCE signals (not new turn boundaries) — they confirm or
+    # question existing structural boundaries.
+    # Type 1 boundary (discourse break): person shift IS a real signal
+    # Type 2 boundary (within monologue): person shift may be false positive
+    morph_boundary_signals = []
+    try:
+        line_profiles = []  # [{line_idx, first_tok, persons: set, numbers: set, moods: set}]
+        _line_start = 0
+        for li, line in enumerate(text.split('\n')):
+            stripped = line.strip()
+            _line_tok_count = len(re.findall(r'[\w-]+|[^\w\s]', stripped)) if stripped else 0
+            if stripped and line_type_map.get(_line_start) == 'TEXT':
+                persons = set()
+                moods = set()
+                for ti in range(_line_start, min(_line_start + _line_tok_count, len(tokens))):
+                    tok = tokens[ti]
+                    if not tok[0].isalpha():
+                        continue
+                    parses = inflector_analyze(tok)
+                    if parses:
+                        p = parses[0]
+                        pers = getattr(p, 'person', None)
+                        mood = getattr(p, 'mood', None)
+                        pos = getattr(p, 'pos', None)
+                        if pers and pos in ('VERB', 'NPRO'):
+                            persons.add(pers)
+                        if mood and pos == 'VERB':
+                            moods.add(mood)
+                if persons:
+                    line_profiles.append({
+                        'line_idx': li, 'first_tok': _line_start,
+                        'persons': persons, 'moods': moods
+                    })
+            _line_start += _line_tok_count
+        
+        # Detect shifts between consecutive profiled lines
+        for i in range(1, len(line_profiles)):
+            prev_p = line_profiles[i-1]
+            curr_p = line_profiles[i]
+            prev_persons = prev_p['persons']
+            curr_persons = curr_p['persons']
+            
+            # Person shift: e.g., {2per} → {1per}
+            if prev_persons and curr_persons and not prev_persons.intersection(curr_persons):
+                shift_strength = 0.6  # base signal
+                # Stronger if clear deictic swap: 1per↔2per
+                if ('1per' in prev_persons and '2per' in curr_persons) or \
+                   ('2per' in prev_persons and '1per' in curr_persons):
+                    shift_strength = 0.8
+                # Mood shift (imperative→indicative) adds evidence
+                if prev_p['moods'] and curr_p['moods'] and not prev_p['moods'].intersection(curr_p['moods']):
+                    shift_strength = min(1.0, shift_strength + 0.15)
+                
+                morph_boundary_signals.append({
+                    'after_token': max(0, curr_p['first_tok'] - 1),
+                    'type': 'morph_boundary',
+                    'confidence': shift_strength,
+                    'reason': f'person_shift:{",".join(sorted(prev_persons))}→{",".join(sorted(curr_persons))}',
+                    'prev_line': prev_p['line_idx'],
+                    'curr_line': curr_p['line_idx'],
+                })
+    except Exception as e:
+        print(f'Morph boundary pass failed: {e}')
+    
     # --- Build speech turns ---
     # Walk segments to assign speaker/turn_id to every token.
     # Speaker segment at token T → all tokens from T+1 until next speaker/heading
@@ -748,7 +814,7 @@ def segment_text(text: str, tokens: list, entity_map: dict) -> list:
             
             turn_id += 1
     
-    return deduped, speaker_map, line_type_map, line_type_conf_map
+    return deduped, speaker_map, line_type_map, line_type_conf_map, morph_boundary_signals
 
 
 @app.post("/api/entropy_map")
@@ -915,8 +981,9 @@ async def entropy_map(req: TensionMapRequest):
         speaker_map = {}
         line_type_map = {}
         line_type_conf_map = {}
+        morph_boundaries = []
         try:
-            text_segments, speaker_map, line_type_map, line_type_conf_map = segment_text(req.text, tokens, entity_map)
+            text_segments, speaker_map, line_type_map, line_type_conf_map, morph_boundaries = segment_text(req.text, tokens, entity_map)
         except Exception as e:
             print(f'Segmentation failed: {e}')
         
@@ -1007,6 +1074,7 @@ async def entropy_map(req: TensionMapRequest):
             "genre": detect_genre(req.text),
             "plot_arc": plot_arc,
             "segments": text_segments,
+            "morph_boundaries": morph_boundaries,
         }
     except Exception:
         print(traceback.format_exc()); raise HTTPException(status_code=500, detail="Error")
