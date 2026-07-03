@@ -278,6 +278,44 @@ def segment_text(text: str, tokens: list, entity_map: dict) -> list:
         if s.endswith(':') and len(words) <= 3:
             return ('speaker', 2)
         
+        # ── Unbracketed stage directions inside turns ──
+        # "Обнимаются.", "Садятся.", "Молчание.", "Уходит." — no parentheses
+        # Short line (1-3 words), ends with '.', contains known stage-direction forms
+        if len(words) <= 3 and s.endswith('.') and not prev_blank:
+            # Lowercase all words for matching
+            lower_set = {w.lower().rstrip('.') for w in words}
+            # Common 3rd-person stage direction verbs (present/past, sg/pl)
+            _STAGE_VERBS = {
+                # Movement
+                'уходит', 'уходят', 'входит', 'входят', 'выходит', 'выходят',
+                'идёт', 'идут', 'бежит', 'бегут', 'следует', 'следуют',
+                'удаляется', 'удаляются', 'приближается', 'появляется',
+                # Posture/gesture
+                'садится', 'садятся', 'встаёт', 'встают', 'встает',
+                'кланяется', 'кланяются', 'обнимаются', 'целуются',
+                'падает', 'падают', 'становится', 'опускается',
+                # Emotion/expression
+                'плачет', 'плачут', 'смеётся', 'смеются', 'вздыхает',
+                'молчит', 'молчат', 'задумывается', 'краснеет',
+                'улыбается', 'хмурится', 'бледнеет',
+                # Action
+                'читает', 'читают', 'пишет', 'берёт', 'берет',
+                'даёт', 'дает', 'открывает', 'закрывает',
+                'показывает', 'указывает', 'звонит', 'стучит',
+                'тушит', 'зажигает',
+                # Past tense forms
+                'ушёл', 'ушла', 'ушли', 'вошёл', 'вошла', 'вошли',
+                'сел', 'села', 'сели', 'встал', 'встала', 'встали',
+                'заплакал', 'заплакала', 'засмеялся', 'засмеялась',
+            }
+            # Stage direction nouns
+            _STAGE_NOUNS = {
+                'молчание', 'пауза', 'занавес', 'антракт', 'темнота',
+                'тишина', 'аплодисменты',
+            }
+            if lower_set & _STAGE_VERBS or lower_set & _STAGE_NOUNS:
+                return ('stage_direction', 0)
+        
         has_numeral = bool(re.search(r'\d+|[IVXLC]{1,6}$', s))
         all_caps = s.rstrip(':') == s.rstrip(':').upper() and any(c.isalpha() for c in s)
         alpha_words = [w for w in words if w[0].isalpha()]
@@ -875,6 +913,14 @@ async def entropy_map(req: TensionMapRequest):
                 r['speaker'] = si['speaker']
                 r['turn_id'] = si['turn_id']
             r['line_type'] = line_type_map.get(i, 'TEXT')
+        
+        # Inherit speaker for orphan STAGE_DIRECTION tokens (e.g., trailing '.' after 'Садятся')
+        for i, r in enumerate(results):
+            if not r.get('speaker') and r.get('line_type') == 'STAGE_DIRECTION' and i > 0:
+                prev = results[i - 1]
+                if prev.get('speaker'):
+                    r['speaker'] = prev['speaker']
+                    r['turn_id'] = prev['turn_id']
 
         return {
             "status": "success",
