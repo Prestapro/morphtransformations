@@ -1025,6 +1025,9 @@
         pane.classList.add('genre-' + genre);
         const nodes = [];
         let inStageDir = false;
+        let inHeader = false;
+        let inSpeakerLabel = false;
+        let inCharsLine = false;
         clips.forEach(clip => {
             // Insert structural break between clips (driven by server segments)
             if (clip.startsNewParagraph && clip.index > 0) {
@@ -1102,25 +1105,53 @@
                     inStageDir = false;
                 }
 
-                // Headers
+                // Headers — group consecutive HEADER tokens into one span
                 if (t.line_type === 'HEADER') {
-                    inner += `<span class="act-header">${escHtml(t.word)}</span>`;
+                    if (!inHeader) { inner += '<span class="act-header">'; inHeader = true; }
+                    inner += escHtml(t.word) + ' ';
+                    // Check if next token is also HEADER
+                    const nextIdx = idx + 1;
+                    const nextTok = nextIdx < clip.data.length ? clip.data[nextIdx] : null;
+                    if (!nextTok || nextTok.line_type !== 'HEADER') {
+                        inner += '</span>';
+                        inHeader = false;
+                    }
                     return;
                 }
+                if (inHeader) { inner += '</span>'; inHeader = false; }
 
-                // Speaker labels
+                // Speaker labels — group consecutive SPEAKER tokens
                 if (t.line_type === 'SPEAKER') {
-                    const c = actorColorMap[t.clean] || actorColorMap[t.word];
-                    const color = c ? c.css : 'var(--text-muted)';
-                    inner += `<span class="speaker-name" style="color:${color}">${escHtml(t.word)}</span>`;
+                    if (!inSpeakerLabel) { 
+                        const c = actorColorMap[t.clean] || actorColorMap[t.word];
+                        const color = c ? c.css : 'var(--text-muted)';
+                        inner += `<span class="speaker-name" style="color:${color}">`;
+                        inSpeakerLabel = true;
+                    }
+                    inner += escHtml(t.word) + ' ';
+                    const nextIdx = idx + 1;
+                    const nextTok = nextIdx < clip.data.length ? clip.data[nextIdx] : null;
+                    if (!nextTok || nextTok.line_type !== 'SPEAKER') {
+                        inner += '</span>';
+                        inSpeakerLabel = false;
+                    }
                     return;
                 }
+                if (inSpeakerLabel) { inner += '</span>'; inSpeakerLabel = false; }
 
-                // Characters line (cast list)
+                // Characters line (cast list) — group consecutive
                 if (t.line_type === 'CHARACTERS_LINE') {
-                    inner += `<span class="act-header" style="font-size:0.9em">${escHtml(t.word)}</span>`;
+                    if (!inCharsLine) { inner += '<span class="act-header" style="font-size:0.9em">'; inCharsLine = true; }
+                    inner += escHtml(t.word) + ' ';
+                    const nextIdx = idx + 1;
+                    const nextTok = nextIdx < clip.data.length ? clip.data[nextIdx] : null;
+                    if (!nextTok || nextTok.line_type !== 'CHARACTERS_LINE') {
+                        inner += '</span>';
+                        inCharsLine = false;
+                    }
                     return;
                 }
+                if (inCharsLine) { inner += '</span>'; inCharsLine = false; }
 
                 const isWord = t.word[0] && t.word[0].match(/[а-яА-Яa-zA-Z0-9]/);
                 if (!isWord && t.is_operator) {
