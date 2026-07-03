@@ -29,6 +29,7 @@ from engine.narrative.stylometry import compute_stylometry
 from engine.narrative.plot_analysis import analyze_text as analyze_plot
 from engine.narrative.scene_detector import detect_scene_boundaries
 from engine.reasoning.text_structure import analyze_thematic_progression
+from engine.language.inflector import analyze as inflector_analyze
 
 STOP_WORDS = {"и", "а", "но", "в", "на", "с", "из", "по", "к", "о", "у", "я", "он", "она", "они", "мы", "вы", "тот", "это", "как", "так", "что", "когда", "если", "был", "была", "было", "были", "уже", "еще", "всё", "все"}
 TITLES = {"сударь", "сударыня", "милостивый", "господин", "госпожа", "князь", "граф", "барин", "барышня"}
@@ -280,40 +281,31 @@ def segment_text(text: str, tokens: list, entity_map: dict) -> list:
         
         # ── Unbracketed stage directions inside turns ──
         # "Обнимаются.", "Садятся.", "Молчание.", "Уходит." — no parentheses
-        # Short line (1-3 words), ends with '.', contains known stage-direction forms
-        if len(words) <= 3 and s.endswith('.') and not prev_blank:
-            # Lowercase all words for matching
-            lower_set = {w.lower().rstrip('.') for w in words}
-            # Common 3rd-person stage direction verbs (present/past, sg/pl)
-            _STAGE_VERBS = {
-                # Movement
-                'уходит', 'уходят', 'входит', 'входят', 'выходит', 'выходят',
-                'идёт', 'идут', 'бежит', 'бегут', 'следует', 'следуют',
-                'удаляется', 'удаляются', 'приближается', 'появляется',
-                # Posture/gesture
-                'садится', 'садятся', 'встаёт', 'встают', 'встает',
-                'кланяется', 'кланяются', 'обнимаются', 'целуются',
-                'падает', 'падают', 'становится', 'опускается',
-                # Emotion/expression
-                'плачет', 'плачут', 'смеётся', 'смеются', 'вздыхает',
-                'молчит', 'молчат', 'задумывается', 'краснеет',
-                'улыбается', 'хмурится', 'бледнеет',
-                # Action
-                'читает', 'читают', 'пишет', 'берёт', 'берет',
-                'даёт', 'дает', 'открывает', 'закрывает',
-                'показывает', 'указывает', 'звонит', 'стучит',
-                'тушит', 'зажигает',
-                # Past tense forms
-                'ушёл', 'ушла', 'ушли', 'вошёл', 'вошла', 'вошли',
-                'сел', 'села', 'сели', 'встал', 'встала', 'встали',
-                'заплакал', 'заплакала', 'засмеялся', 'засмеялась',
-            }
-            # Stage direction nouns
+        # Short line (1-3 words), ends with '.', uses inflector for morphological detection
+        if len(words) <= 3 and s.endswith('.'):
+            # Check via inflector: any word is VERB with person=3per
+            is_stage_verb = False
+            for w in words:
+                clean_w = w.rstrip('.')
+                if not clean_w or not clean_w[0].isalpha():
+                    continue
+                try:
+                    parses = inflector_analyze(clean_w)
+                    if parses:
+                        p = parses[0]
+                        if p.pos == 'VERB' and getattr(p, 'person', None) == '3per':
+                            is_stage_verb = True
+                            break
+                except Exception:
+                    pass
+            
+            # Fallback: stage direction nouns (not morphologically verb-like)
             _STAGE_NOUNS = {
                 'молчание', 'пауза', 'занавес', 'антракт', 'темнота',
                 'тишина', 'аплодисменты',
             }
-            if lower_set & _STAGE_VERBS or lower_set & _STAGE_NOUNS:
+            lower_set = {w.lower().rstrip('.') for w in words}
+            if is_stage_verb or (lower_set & _STAGE_NOUNS):
                 return ('stage_direction', 0)
         
         has_numeral = bool(re.search(r'\d+|[IVXLC]{1,6}$', s))
