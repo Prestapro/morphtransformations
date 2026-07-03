@@ -561,18 +561,40 @@ def segment_text(text: str, tokens: list, entity_map: dict) -> list:
             return ('speaker', 0.90 if prev_blank else 0.80)  # Title Case, needs next_line
         
         # Must be preceded by blank line for remaining structural markers
-        # (headings, characters_line — these require more context)
-        if not prev_blank:
-            return (None, 0)
+        # (headings — these require more context).
+        # Exception: characters_line can follow a heading directly without blank.
         
-        # ── Characters line: names with connectives ──
+        # ── Characters line: names with connectives or commas ──
         # "Лиза и Фамусов", "София, Лиза и Молчалин", "Romeo and Juliet"
+        # "София, Лиза, Чацкий, Фамусов." — comma-separated, may end with '.'
         cap_words = [w for w in alpha_words if w[0].isupper()]
         lower_words = [w for w in words if w[0].islower()]
-        if (len(cap_words) >= 2 and not ends_with_punct and not has_numeral 
-                and 2 <= len(alpha_words) <= 6 and not all_caps
-                and lower_words):
-            return ('characters_line', 0.85)  # names with connectives
+        has_comma = ',' in s
+        has_question = '?' in s
+        s_stripped = s.rstrip('.')  # allow trailing period
+        
+        # Connectives allowed in cast lists (not verbs/adverbs)
+        _CAST_CONNECTIVES = {'и', 'или', 'да', 'с', 'со', 'and', 'or', 'y'}
+        
+        # Characters line: ≥2 capitalized words, connected by commas/connectives
+        # Reject if: has '?', ends with '!' or '…', has too many non-name words
+        if (len(cap_words) >= 2 and not has_numeral and not has_question
+                and 2 <= len(alpha_words) <= 8 and not all_caps
+                and (has_comma or lower_words)  # commas OR connectives like "и"
+                and not s_stripped.endswith(('!', '…'))):
+            # Check: do all alpha words look like proper nouns (first letter upper)?
+            all_names = all(w[0].isupper() for w in alpha_words)
+            if all_names and has_comma:
+                # "София, Лиза, Чацкий, Фамусов." — pure comma-separated names
+                return ('characters_line', 0.90)
+            elif lower_words:
+                # Only if ALL lowercase words are connectives, not verbs/adverbs
+                non_connective = [w for w in lower_words if w.lower() not in _CAST_CONNECTIVES]
+                if not non_connective:
+                    return ('characters_line', 0.85)  # names with connectives
+        
+        if not prev_blank:
+            return (None, 0)
         
         # ── Multi-word CAPS or CAPS+numeral = structural heading ──
         if all_caps and (len(words) >= 2 or has_numeral) and not ends_with_punct:
