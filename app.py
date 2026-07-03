@@ -624,7 +624,13 @@ def segment_text(text: str, tokens: list, entity_map: dict) -> list:
             prev_blank = True
             continue
         
-        next_line = lines[li + 1].strip() if li + 1 < len(lines) else ''
+        # Find next non-blank line (skip blanks between speaker and text)
+        next_line = ''
+        for nli in range(li + 1, len(lines)):
+            nl_stripped = lines[nli].strip()
+            if nl_stripped:
+                next_line = nl_stripped
+                break
         ltype, lconf = _classify_line(stripped, prev_blank, next_line)
         
         line_tok_count = len(re.findall(r'[\w-]+|[^\w\s]', stripped))
