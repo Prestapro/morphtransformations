@@ -350,6 +350,7 @@ def segment_text(text: str, tokens: list, entity_map: dict) -> list:
     # Scan lines and classify each one
     lines = text.split('\n')
     line_start_token = 0
+    line_type_map = {}  # token_index → line_type (HEADER|SPEAKER|STAGE_DIRECTION|CHARACTERS_LINE|TEXT)
     prev_blank = True  # start of text counts as preceded by blank
     for li, line in enumerate(lines):
         stripped = line.strip()
@@ -359,6 +360,37 @@ def segment_text(text: str, tokens: list, entity_map: dict) -> list:
         
         next_line = lines[li + 1].strip() if li + 1 < len(lines) else ''
         ltype, llevel = _classify_line(stripped, prev_blank, next_line)
+        
+        line_tok_count = len(re.findall(r'[\w-]+|[^\w\s]', stripped))
+        
+        # Map line_type for all tokens on this line
+        lt = 'TEXT'
+        if ltype == 'heading':
+            lt = 'HEADER'
+        elif ltype == 'speaker':
+            lt = 'SPEAKER'
+        elif ltype == 'stage_direction':
+            lt = 'STAGE_DIRECTION'
+        elif ltype == 'characters_line':
+            lt = 'CHARACTERS_LINE'
+        
+        for ti in range(line_start_token, line_start_token + line_tok_count):
+            if ti < len(tokens):
+                line_type_map[ti] = lt
+        
+        # Detect inline stage directions: tokens inside () within TEXT lines
+        if lt == 'TEXT':
+            in_paren = False
+            for ti in range(line_start_token, min(line_start_token + line_tok_count, len(tokens))):
+                if tokens[ti] == '(':
+                    in_paren = True
+                    line_type_map[ti] = 'STAGE_DIRECTION'
+                elif tokens[ti] == ')' and in_paren:
+                    line_type_map[ti] = 'STAGE_DIRECTION'
+                    in_paren = False
+                elif in_paren:
+                    line_type_map[ti] = 'STAGE_DIRECTION'
+        
         if ltype:
             line_tokens = re.findall(r'[\w-]+|[^\w\s]', stripped)
             if line_tokens:
@@ -372,8 +404,7 @@ def segment_text(text: str, tokens: list, entity_map: dict) -> list:
                         })
                         break
         
-        line_word_count = len(re.findall(r'[\w-]+|[^\w\s]', stripped))
-        line_start_token += line_word_count
+        line_start_token += line_tok_count
         prev_blank = False
     
     # --- Pass 1.5: Rhythm-based heading detection ---
@@ -651,7 +682,7 @@ def segment_text(text: str, tokens: list, entity_map: dict) -> list:
             
             turn_id += 1
     
-    return deduped, speaker_map
+    return deduped, speaker_map, line_type_map
 
 
 @app.post("/api/entropy_map")
@@ -816,17 +847,19 @@ async def entropy_map(req: TensionMapRequest):
         # --- Structural Segmentation ---
         text_segments = []
         speaker_map = {}
+        line_type_map = {}
         try:
-            text_segments, speaker_map = segment_text(req.text, tokens, entity_map)
+            text_segments, speaker_map, line_type_map = segment_text(req.text, tokens, entity_map)
         except Exception as e:
             print(f'Segmentation failed: {e}')
         
-        # Inject speaker/turn into token results
+        # Inject speaker/turn/line_type into token results
         for i, r in enumerate(results):
             si = speaker_map.get(i)
             if si:
                 r['speaker'] = si['speaker']
                 r['turn_id'] = si['turn_id']
+            r['line_type'] = line_type_map.get(i, 'TEXT')
 
         return {
             "status": "success",
