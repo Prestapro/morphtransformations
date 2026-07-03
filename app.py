@@ -1389,6 +1389,49 @@ async def entropy_map(req: TensionMapRequest):
                 if tid not in turn_speech_acts:
                     turn_speech_acts[tid] = {}
                 turn_speech_acts[tid]['question'] = 1.0
+                
+                # Rhetorical question detection via 3 signals:
+                # Signal 1: rhetorical markers in the question clause
+                rhetorical_markers = {'разве', 'ужели', 'неужели', 'ужель', 
+                                      'неужто', 'ужли', 'нешто', 'али'}
+                has_marker = False
+                # Scan backwards from '?' to previous sentence end or turn start
+                for back_j in range(i - 1, max(i - 30, -1), -1):
+                    bw = results[back_j]['word'].lower()
+                    if bw in ('.', '!', '?', '…'):
+                        break
+                    if bw in rhetorical_markers:
+                        has_marker = True
+                        break
+                    # Also check lemmas
+                    try:
+                        bp = inflector_analyze(bw)
+                        if bp and getattr(bp[0], 'lemma', '') in rhetorical_markers:
+                            has_marker = True
+                            break
+                    except Exception:
+                        pass
+                
+                if has_marker:
+                    turn_speech_acts[tid]['rhetorical_question'] = 0.90
+                else:
+                    # Signal 2: question followed by statement in same turn
+                    # (self-response pattern: "Что мне делать? Пойти домой.")
+                    has_self_response = False
+                    for fwd_j in range(i + 1, min(i + 30, len(results))):
+                        fw = results[fwd_j]
+                        if fw.get('turn_id') != tid:
+                            break
+                        if fw['word'] in ('.', '…') and fw.get('line_type') == 'TEXT':
+                            # Found a declarative sentence after the question
+                            has_self_response = True
+                            break
+                        if fw['word'] == '?':
+                            break  # another question, not self-response
+                    
+                    if has_self_response:
+                        turn_speech_acts[tid]['rhetorical_question'] = 0.65
+                
             elif r['word'] == '!' and lt == 'TEXT':
                 if tid not in turn_speech_acts:
                     turn_speech_acts[tid] = {}
