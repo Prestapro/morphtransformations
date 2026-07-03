@@ -288,15 +288,14 @@ def segment_text(text: str, tokens: list, entity_map: dict) -> list:
         if not prev_blank:
             return (None, 0)
         
-        # ── Characters line: 2-4 Title Case words, no punct, no numeral ──
-        # "Лиза и Фамусов", "Romeo and Juliet"
-        # Has a connective between capitalized names
-        if (title_case and not ends_with_punct and not has_numeral 
-                and 2 <= len(alpha_words) <= 5 and not all_caps):
-            # Check there's at least one lowercase connective word between caps words
-            lower_words = [w for w in words if w[0].islower()]
-            if lower_words:
-                return ('characters_line', 2)
+        # ── Characters line: names with connectives ──
+        # "Лиза и Фамусов", "София, Лиза и Молчалин", "Romeo and Juliet"
+        cap_words = [w for w in alpha_words if w[0].isupper()]
+        lower_words = [w for w in words if w[0].islower()]
+        if (len(cap_words) >= 2 and not ends_with_punct and not has_numeral 
+                and 2 <= len(alpha_words) <= 6 and not all_caps
+                and lower_words):
+            return ('characters_line', 2)
         
         # ── Single CAPS word = speaker (ФАМУСОВ) ──
         if all_caps and len(words) == 1 and not has_numeral and not ends_with_punct:
