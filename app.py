@@ -322,7 +322,30 @@ def segment_text(text: str, tokens: list, entity_map: dict) -> list:
         title_case = len(alpha_words) >= 2 and all(w[0].isupper() for w in alpha_words)
         ends_with_punct = s[-1] in '.,:;!?…'
         
-        # Must be preceded by blank line for structural markers
+        # ── Speaker detection (works even without prev_blank) ──
+        # Strict punctuation filter: internal commas, semicolons etc. disqualify
+        # This prevents "Барин, да." from triggering as speaker
+        _SPEAKER_BAD_CHARS = set(',;!?—–«»""\u201c\u201d()…:')
+        has_bad_punct = any(c in _SPEAKER_BAD_CHARS for c in s.rstrip('.'))
+        
+        # Speaker with colon already handled above (line ~278)
+        
+        # Single CAPS word = speaker (ФАМУСОВ)
+        if (all_caps and len(words) == 1 and not has_numeral 
+                and not ends_with_punct and not has_bad_punct):
+            return ('speaker', 2)
+        
+        # Single Title Case word = speaker (Чацкий, Sofia, Молчалин)
+        # Next line must exist and be either text or stage direction
+        if (len(words) == 1 and not all_caps and not has_numeral 
+                and not ends_with_punct and not has_bad_punct
+                and words[0][0].isupper()
+                and next_line
+                and (next_line.startswith('(') or len(next_line.split()) > 1 or next_line != next_line.strip().title())):
+            return ('speaker', 2)
+        
+        # Must be preceded by blank line for remaining structural markers
+        # (headings, characters_line — these require more context)
         if not prev_blank:
             return (None, 0)
         
@@ -334,18 +357,6 @@ def segment_text(text: str, tokens: list, entity_map: dict) -> list:
                 and 2 <= len(alpha_words) <= 6 and not all_caps
                 and lower_words):
             return ('characters_line', 2)
-        
-        # ── Single CAPS word = speaker (ФАМУСОВ) ──
-        if all_caps and len(words) == 1 and not has_numeral and not ends_with_punct:
-            return ('speaker', 2)
-        
-        # ── Single Title Case word = speaker (Чацкий, Sofia, Молчалин) ──
-        # Next line must exist and be either text or stage direction
-        if (len(words) == 1 and not all_caps and not has_numeral 
-                and not ends_with_punct and words[0][0].isupper()
-                and next_line
-                and (next_line.startswith('(') or len(next_line.split()) > 1 or next_line != next_line.strip().title())):
-            return ('speaker', 2)
         
         # ── Multi-word CAPS or CAPS+numeral = structural heading ──
         if all_caps and (len(words) >= 2 or has_numeral) and not ends_with_punct:
