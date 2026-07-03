@@ -225,6 +225,62 @@ def detect_genre(text: str) -> str:
     return 'prose'
 
 
+# --- 3rd person pronoun coreference helper ---
+def _find_last_entity_by_gender(results, current_idx, target_gender, known_speakers, current_speaker):
+    """Find the last mentioned entity before current_idx that matches target_gender.
+    
+    target_gender: 'masc' or 'fem'
+    Returns entity name or None.
+    """
+    # Scan backwards up to 100 tokens
+    search_limit = max(0, current_idx - 100)
+    candidates = []
+    
+    for j in range(current_idx - 1, search_limit, -1):
+        r = results[j]
+        # Look for entities and speaker names
+        name = None
+        if r.get('is_entity') and r.get('confidence', 0) >= 0.6:
+            name = r.get('clean', r['word'])
+        elif r['word'] in known_speakers:
+            name = r['word']
+        elif r.get('line_type') == 'SPEAKER':
+            name = r['word']
+        
+        if not name or name == current_speaker or ' ' in name:
+            continue
+        
+        # Determine gender from inflector (with surname correction)
+        try:
+            parses = inflector_analyze(name)
+            if parses:
+                gender = getattr(parses[0], 'gender', None)
+                # Fix: Russian masculine surnames (-ов/-ев/-ин/-ский/-ый/-ой/-ий)
+                # get misparsed as femn by inflector
+                name_lower = name.lower()
+                if gender == 'femn':
+                    masc_suffixes = ('ов', 'ев', 'ёв', 'ин', 'ын', 'ский', 'ской', 'цкий', 'цкой', 'ый', 'ой', 'ий')
+                    if any(name_lower.endswith(s) for s in masc_suffixes):
+                        gender = 'masc'
+                
+                if gender == 'masc' and target_gender == 'masc':
+                    return name
+                elif gender in ('femn',) and target_gender == 'fem':
+                    return name
+                elif gender and ((gender == 'masc') != (target_gender == 'masc')):
+                    continue  # wrong gender, skip
+                
+                # Fallback: no reliable gender — use ending heuristic
+                if target_gender == 'fem' and (name_lower.endswith('а') or name_lower.endswith('я')):
+                    return name
+                elif target_gender == 'masc' and not (name_lower.endswith('а') or name_lower.endswith('я')):
+                    return name
+        except Exception:
+            pass
+    
+    return None
+
+
 # --- Text Structural Segmentation ---
 def segment_text(text: str, tokens: list, entity_map: dict) -> list:
     """Segment text into structural blocks using engine analysis.
@@ -1361,6 +1417,19 @@ async def entropy_map(req: TensionMapRequest):
                 if resolved:
                     r['pronoun_ref'] = resolved
                     r['pronoun_type'] = '2per'
+            
+            # 3rd person pronouns → last mentioned entity of matching gender
+            elif word_lower in ('он', 'его', 'ему', 'им', 'нём', 'него'):
+                # Find last mentioned masc entity before this position
+                ref = _find_last_entity_by_gender(results, i, 'masc', known_speaker_names, spk)
+                if ref:
+                    r['pronoun_ref'] = ref
+                    r['pronoun_type'] = '3per_masc'
+            elif word_lower in ('она', 'её', 'ей', 'ею', 'ней', 'неё'):
+                ref = _find_last_entity_by_gender(results, i, 'fem', known_speaker_names, spk)
+                if ref:
+                    r['pronoun_ref'] = ref
+                    r['pronoun_type'] = '3per_fem'
         
         # --- Build dialogue_turns[] ---
         dialogue_turns = []
