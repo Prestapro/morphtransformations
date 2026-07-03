@@ -529,7 +529,9 @@ def segment_text(text: str, tokens: list, entity_map: dict) -> list:
             # Fallback: stage direction nouns (not morphologically verb-like)
             _STAGE_NOUNS = lex.stage_direction_nouns
             lower_set = {w.lower().rstrip('.') for w in words}
-            if is_stage_verb or (lower_set & _STAGE_NOUNS):
+            stage_spike = any(spike_lex.is_category(w, 'stage_direction')
+                              for w in lower_set)
+            if is_stage_verb or (lower_set & _STAGE_NOUNS) or stage_spike:
                 return ('stage_direction', 0.85)  # inflector: VERB+3per or stage noun
         
         has_numeral = bool(re.search(r'\d+|[IVXLC]{1,6}$', s))
@@ -1731,7 +1733,7 @@ async def entropy_map(req: TensionMapRequest):
                     bw = results[back_j]['word'].lower()
                     if bw in ('.', '!', '?', '…'):
                         break
-                    if bw in rhetorical_markers:
+                    if bw in rhetorical_markers or spike_lex.is_rhetorical(bw):
                         has_marker = True
                         break
                     # Also check lemmas
@@ -1769,7 +1771,7 @@ async def entropy_map(req: TensionMapRequest):
                 turn_speech_acts[tid]['exclamation'] = 1.0
             
             # Negation at start of turn: "Нет, ..." → denial
-            if lt == 'TEXT' and r['word'].lower() in lex.denial_words and i > 0:
+            if lt == 'TEXT' and (r['word'].lower() in lex.denial_words or spike_lex.is_denial(r['word'])) and i > 0:
                 prev_lt = results[i-1].get('line_type', '')
                 if prev_lt == 'SPEAKER' or (i > 1 and results[i-2].get('line_type') == 'SPEAKER'):
                     if tid not in turn_speech_acts:

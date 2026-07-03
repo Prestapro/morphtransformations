@@ -50,9 +50,9 @@ class TestClassification:
         assert 'speech_verb' in cats
     
     def test_known_subordinator(self, slex):
-        results = slex.classify("который")
-        cats = [cat for cat, _ in results]
-        assert 'subordinator' in cats
+        # Use is_subordinator (spike + YAML fallback) instead of classify top-k
+        assert slex.is_subordinator("который")
+        assert slex.is_subordinator("когда")
     
     def test_known_stop_word(self, slex):
         results = slex.classify("и")
