@@ -1063,7 +1063,7 @@
                 }
             }
             let inner = '';
-            clip.tokens.forEach(t => {
+            clip.tokens.forEach((t, idx) => {
                 const gap = t._gap || '';
                 if (gap) {
                     // Punctuation that must stay glued to the previous word (closing/trailing)
@@ -1111,7 +1111,7 @@
                     inner += escHtml(t.word) + ' ';
                     // Check if next token is also HEADER
                     const nextIdx = idx + 1;
-                    const nextTok = nextIdx < clip.data.length ? clip.data[nextIdx] : null;
+                    const nextTok = nextIdx < clip.tokens.length ? clip.tokens[nextIdx] : null;
                     if (!nextTok || nextTok.line_type !== 'HEADER') {
                         inner += '</span>';
                         inHeader = false;
@@ -1130,7 +1130,7 @@
                     }
                     inner += escHtml(t.word) + ' ';
                     const nextIdx = idx + 1;
-                    const nextTok = nextIdx < clip.data.length ? clip.data[nextIdx] : null;
+                    const nextTok = nextIdx < clip.tokens.length ? clip.tokens[nextIdx] : null;
                     if (!nextTok || nextTok.line_type !== 'SPEAKER') {
                         inner += '</span>';
                         inSpeakerLabel = false;
@@ -1144,7 +1144,7 @@
                     if (!inCharsLine) { inner += '<span class="act-header" style="font-size:0.9em">'; inCharsLine = true; }
                     inner += escHtml(t.word) + ' ';
                     const nextIdx = idx + 1;
-                    const nextTok = nextIdx < clip.data.length ? clip.data[nextIdx] : null;
+                    const nextTok = nextIdx < clip.tokens.length ? clip.tokens[nextIdx] : null;
                     if (!nextTok || nextTok.line_type !== 'CHARACTERS_LINE') {
                         inner += '</span>';
                         inCharsLine = false;
