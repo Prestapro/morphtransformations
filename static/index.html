@@ -167,7 +167,13 @@
                             <label for="dec-input-word">Слово</label>
                             <input type="text" id="dec-input-word" placeholder="Например: перечитывающий, безработный..." autocomplete="off">
                         </div>
-                        <button class="primary-btn" id="btn-run-decompose">Разобрать</button>
+                        <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 20px;">
+                            <button class="primary-btn" id="btn-run-decompose" style="margin: 0;">Разобрать</button>
+                            <label style="display: flex; align-items: center; gap: 6px; font-size: 0.8rem; color: var(--text-secondary); cursor: pointer;" title="Включать ФИО, города и организации">
+                                <input type="checkbox" id="chk-proper-dec" style="accent-color: #818cf8; width: 16px; height: 16px;">
+                                Имена собственные
+                            </label>
+                        </div>
                     </div>
                     <div class="result-panel">
                         <h3>Морфемная структура</h3>
@@ -266,6 +272,7 @@
                             <div class="msrch-nav-panel">
                                 <button class="style-btn active" id="btn-src-tikhonov">Тихонов (100K)</button>
                                 <button class="style-btn msrch-premium-badge" id="btn-src-opencorpora">OpenCorpora (3.1M форм)</button>
+                                <button class="style-btn" id="btn-src-wiktionary" style="border-color:#6366f1;color:#6366f1">Wiktionary (248K)</button>
                                 <button class="style-btn" id="btn-src-algorithmic" style="border-color:#22c55e;color:#22c55e">OpenCorpora (62K)</button>
                             </div>
                         </div>
@@ -285,11 +292,15 @@
                                 <button class="style-btn" data-pos="COMP">Сравн.</button>
                             </div>
                         </div>
-                        <div style="display: flex; align-items: center; gap: 12px; margin-top: 4px;">
+                        <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-top: 4px;">
                             <button class="primary-btn" id="btn-run-msrch">Найти слова</button>
                             <label style="display: flex; align-items: center; gap: 6px; font-size: 0.8rem; color: var(--text-secondary); cursor: pointer;">
                                 <input type="checkbox" id="chk-no-limit" style="accent-color: #818cf8; width: 16px; height: 16px;">
                                 Без лимита
+                            </label>
+                            <label style="display: flex; align-items: center; gap: 6px; font-size: 0.8rem; color: var(--text-secondary); cursor: pointer;" title="Включать ФИО, города и организации">
+                                <input type="checkbox" id="chk-proper" style="accent-color: #818cf8; width: 16px; height: 16px;">
+                                Имена собственные
                             </label>
                         </div>
                     </div>

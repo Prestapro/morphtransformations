@@ -78,6 +78,43 @@ document.addEventListener("DOMContentLoaded", () => {
     });
 
     // -----------------------------------------------------------------------
+    // Proper Noun Filtering Sync & Persistence
+    // -----------------------------------------------------------------------
+    const chkProperDec = document.getElementById('chk-proper-dec');
+    const chkProperSearch = document.getElementById('chk-proper');
+
+    const savedProper = localStorage.getItem('include_proper') === 'true';
+    if (chkProperDec) chkProperDec.checked = savedProper;
+    if (chkProperSearch) chkProperSearch.checked = savedProper;
+
+    function syncProperCheckboxes(checked) {
+        if (chkProperDec) chkProperDec.checked = checked;
+        if (chkProperSearch) chkProperSearch.checked = checked;
+        localStorage.setItem('include_proper', checked);
+    }
+
+    if (chkProperDec) {
+        chkProperDec.addEventListener('change', (e) => {
+            syncProperCheckboxes(e.target.checked);
+            // Re-run decomposition if input exists
+            const dInput = document.getElementById("dec-input-word");
+            if (dInput \u0026\u0026 dInput.value.trim()) {
+                document.getElementById('btn-run-decompose').click();
+            }
+        });
+    }
+    if (chkProperSearch) {
+        chkProperSearch.addEventListener('change', (e) => {
+            syncProperCheckboxes(e.target.checked);
+            // Re-run search if input exists and the function is defined
+            const msrchInput = document.getElementById('msrch-input');
+            if (msrchInput \u0026\u0026 msrchInput.value.trim() \u0026\u0026 typeof _runMsrchSearch === 'function') {
+                _runMsrchSearch(1);
+            }
+        });
+    }
+
+    // -----------------------------------------------------------------------
     // API Calling Functions
     // -----------------------------------------------------------------------
     async function postData(url = "", data = {}) {
@@ -453,7 +490,9 @@ document.addEventListener("DOMContentLoaded", () => {
         if (!word) { decResultBox.innerHTML = `<div class="empty-state">Введите слово</div>`; return; }
         decResultBox.innerHTML = `<div class="empty-state">Анализ...</div>`;
         try {
-            const data = await postData("/api/decompose", { word });
+            const chkProperDec = document.getElementById('chk-proper-dec');
+            const includeProper = chkProperDec && chkProperDec.checked;
+            const data = await postData("/api/decompose", { word, include_proper: includeProper });
             let html = '<div style="display: flex; flex-wrap: wrap; gap: 4px; align-items: center; justify-content: center; margin-bottom: 24px;">';
             data.morphemes.forEach((m, idx) => {
                 const c = MORPH_COLORS[m.type] || MORPH_COLORS.ROOT;
@@ -486,9 +525,9 @@ document.addEventListener("DOMContentLoaded", () => {
     btnCognates.addEventListener("click", async () => {
         const word = cogInput.value.trim();
         if (!word) { cogResultBox.innerHTML = `<div class="empty-state">Введите слово</div>`; return; }
-        cogResultBox.innerHTML = `<div class="empty-state">Поиск...</div>`;
         try {
-            const data = await postData("/api/cognates", { word });
+            const includeProper = chkProperDec \u0026\u0026 chkProperDec.checked;
+            const data = await postData("/api/cognates", { word, include_proper: includeProper });
             if (data.error) {
                 cogResultBox.innerHTML = `<div class="empty-state">${data.error}</div>`;
                 return;
@@ -1045,9 +1084,11 @@ document.addEventListener("DOMContentLoaded", () => {
     // Source toggle (independent from type)
     const btnSrcTikhonov = document.getElementById('btn-src-tikhonov');
     const btnSrcOpenCorpora = document.getElementById('btn-src-opencorpora');
+    const btnSrcWiktionary = document.getElementById('btn-src-wiktionary');
     const btnSrcAlgorithmic = document.getElementById('btn-src-algorithmic');
     let useOpenCorpora = false;
     let useAlgorithmic = false;
+    let activeSource = 'tikhonov';
 
     const posFilterGroup = document.getElementById('pos-filter-group');
     let activeEndPos = 'any';
@@ -1055,6 +1096,7 @@ document.addEventListener("DOMContentLoaded", () => {
     function _deactivateAllSrc() {
         btnSrcTikhonov.classList.remove('active');
         btnSrcOpenCorpora.classList.remove('active');
+        btnSrcWiktionary.classList.remove('active');
         btnSrcAlgorithmic.classList.remove('active');
     }
 
@@ -1063,6 +1105,7 @@ document.addEventListener("DOMContentLoaded", () => {
         btnSrcTikhonov.classList.add('active');
         useOpenCorpora = false;
         useAlgorithmic = false;
+        activeSource = 'tikhonov';
         posFilterGroup.style.display = 'none';
         _runMsrchSearch(msrchInput.value.trim(), msrchWordFilter.value.trim(), 1);
     });
@@ -1071,6 +1114,16 @@ document.addEventListener("DOMContentLoaded", () => {
         btnSrcOpenCorpora.classList.add('active');
         useOpenCorpora = true;
         useAlgorithmic = false;
+        activeSource = 'algorithmic'; // for OpenCorpora (algorithmic decomp)
+        posFilterGroup.style.display = 'block';
+        _runMsrchSearch(msrchInput.value.trim(), msrchWordFilter.value.trim(), 1);
+    });
+    btnSrcWiktionary.addEventListener('click', () => {
+        _deactivateAllSrc();
+        btnSrcWiktionary.classList.add('active');
+        useOpenCorpora = true; // Use the unified search endpoint
+        useAlgorithmic = false;
+        activeSource = 'wiktionary';
         posFilterGroup.style.display = 'block';
         _runMsrchSearch(msrchInput.value.trim(), msrchWordFilter.value.trim(), 1);
     });
@@ -1079,6 +1132,7 @@ document.addEventListener("DOMContentLoaded", () => {
         btnSrcAlgorithmic.classList.add('active');
         useOpenCorpora = false;
         useAlgorithmic = true;
+        activeSource = 'algorithmic_words';
         posFilterGroup.style.display = 'none';
         _loadAlgorithmic(1);
     });
@@ -1326,6 +1380,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
         const isOpenCorpora = useOpenCorpora;
         const noLimit = chkNoLimit && chkNoLimit.checked;
+        const includeProper = document.getElementById('chk-proper') && document.getElementById('chk-proper').checked;
 
         try {
             let data;
@@ -1337,12 +1392,21 @@ document.addEventListener("DOMContentLoaded", () => {
                     pos: activeEndPos,
                     search_type: searchType,
                     page: currentMsrchPage,
-                    page_size: noLimit ? 0 : 5000
+                    page_size: noLimit ? 0 : 5000,
+                    include_proper: includeProper,
+                    source: activeSource
                 };
                 if (wordFilter) params.word_filter = wordFilter;
                 data = await postData('/api/ending_search', params);
             } else {
-                data = await postData('/api/morpheme_search', { morpheme, morpheme_type: activeMsrchType, page: currentMsrchPage, page_size: 5000 });
+                data = await postData('/api/morpheme_search', { 
+                    morpheme, 
+                    morpheme_type: activeMsrchType, 
+                    page: currentMsrchPage, 
+                    page_size: 5000, 
+                    source: activeSource,
+                    include_proper: includeProper 
+                });
             }
 
             if (data.total === 0) {
@@ -1544,7 +1608,8 @@ document.addEventListener("DOMContentLoaded", () => {
                 pos: activeEndPos,
                 search_type: activeMsrchType,
                 word_filter: wordFilter,
-                search_source: isOpenCorpora ? 'opencorpora' : 'tikhonov'
+                search_source: isOpenCorpora ? 'opencorpora' : 'tikhonov',
+                include_proper: includeProper
             };
 
             const uncLabel = (totalUncovered !== undefined && totalUncovered !== -1) ? totalUncovered.toLocaleString('ru-RU') : '...';
@@ -1589,8 +1654,8 @@ document.addEventListener("DOMContentLoaded", () => {
                 const m_type_map = { prefix: 'PREFIX', suffix: 'SUFFIX', root: 'ROOT', any: 'PREFIX' };
                 const t = m_type_map[activeMsrchType] || 'PREFIX';
                 
-                // For root search: show companion roots (second roots in compound words)
-                if (activeMsrchType === 'root' && stats['COMPANION_ROOT']) {
+                // Show companion roots (second roots in compound words)
+                if (stats['COMPANION_ROOT']) {
                     const compList = Object.entries(stats['COMPANION_ROOT']).sort((a, b) => b[1] - a[1]);
                     if (compList.length > 0) {
                         html += `<div class="msrch-summary-box">`;
@@ -1604,7 +1669,9 @@ document.addEventListener("DOMContentLoaded", () => {
                         });
                         html += `</div></div>`;
                     }
-                } else if (stats[t]) {
+                }
+                
+                if (stats[t]) {
                     const mList = Object.entries(stats[t]).sort((a, b) => b[1] - a[1]);
                     if (mList.length > 0) {
                         html += `<div class="msrch-summary-box">`;

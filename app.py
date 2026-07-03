@@ -1259,7 +1259,7 @@ async def entropy_map(req: TensionMapRequest):
                 except Exception:
                     pass
         
-        # Inject addressee and speech_act into turn tokens
+        # Inject addressee, speech_act, and entity_role into turn tokens
         for i, r in enumerate(results):
             tid = r.get('turn_id')
             if tid is not None:
@@ -1267,6 +1267,15 @@ async def entropy_map(req: TensionMapRequest):
                     r['turn_addressees'] = list(turn_addressees[tid])
                 if tid in turn_speech_acts:
                     r['speech_acts'] = turn_speech_acts[tid]  # dict {act: confidence}
+            
+            # Entity/Role assignment (F.88-90)
+            lt = r.get('line_type', '')
+            if lt == 'SPEAKER':
+                r['entity_role'] = 'speaker'
+            elif r.get('is_addressee'):
+                r['entity_role'] = 'addressee'
+            elif lt == 'TEXT' and r.get('is_entity') and r.get('confidence', 0) >= 0.6:
+                r['entity_role'] = 'mentioned'
         
         # --- Turn-pair linking ---
         # Link question turns to their answers: turn N (?) → turn N+1

@@ -1390,9 +1390,19 @@
                 html += `<div class="t-cell${sel?' sel':''}" style="width:${w}px;height:${tr.h}px;${paraEdge}" data-tclip="${clip.index}" onclick="selectClip(${clip.index})">`;
 
                 switch(tr.id) {
-                    case 'ruler':
-                        html += `<span>${String(clip.index+1).padStart(2,'0')}</span>`;
+                    case 'ruler': {
+                        const label = String(clip.index+1).padStart(2,'0');
+                        const isHeading = clip._breakType === 'heading';
+                        const isSpeaker = clip._breakType === 'speaker';
+                        if (isHeading) {
+                            html += `<span style="display:flex;align-items:center;gap:2px;"><span style="color:oklch(0.85 0.18 85);font-size:0.7em;">◆</span>${label}</span>`;
+                        } else if (isSpeaker) {
+                            html += `<span style="display:flex;align-items:center;gap:1px;"><span style="color:oklch(0.7 0.12 200);font-size:0.5em;">●</span>${label}</span>`;
+                        } else {
+                            html += `<span>${label}</span>`;
+                        }
                         break;
+                    }
                     case 'entropy': {
                         // Mini bars per word-token
                         const words = clip.tokens.filter(t => t.word[0] && t.word[0].match(/[а-яА-Яa-zA-Z0-9]/));
