@@ -922,6 +922,67 @@ async def entropy_map(req: TensionMapRequest):
                     r['speaker'] = prev['speaker']
                     r['turn_id'] = prev['turn_id']
 
+        # --- Addressee detection ---
+        # Find speaker names mentioned inside TEXT lines (vocative/address)
+        # Pattern: name entity in TEXT position + comma/exclamation context
+        known_speaker_names = set()
+        for s in text_segments:
+            if s['type'] == 'speaker':
+                known_speaker_names.add(s.get('reason', '').replace('form:', '').strip())
+        
+        # Per-turn: collect addressees and speech_acts
+        turn_addressees = {}  # turn_id → set of addressee names
+        turn_speech_acts = {}  # turn_id → set of acts
+        
+        for i, r in enumerate(results):
+            tid = r.get('turn_id')
+            if tid is None:
+                continue
+            lt = r.get('line_type', 'TEXT')
+            
+            # Addressee: entity in TEXT that matches a known speaker,
+            # or word that directly matches a known speaker name
+            is_entity_match = r.get('is_entity') and r.get('confidence', 0) >= 0.6
+            is_speaker_name_match = r['word'] in known_speaker_names
+            if lt == 'TEXT' and (is_entity_match or is_speaker_name_match):
+                canon = r.get('clean', '')
+                # Check if this entity matches any known speaker
+                matched_speaker = None
+                for sn in known_speaker_names:
+                    if canon.lower() == sn.lower() or r['word'].lower() == sn.lower():
+                        matched_speaker = sn
+                        break
+                if matched_speaker and matched_speaker != r.get('speaker', ''):
+                    # Vocative check: preceded or followed by comma, exclamation
+                    prev_word = results[i-1]['word'] if i > 0 else ''
+                    next_word = results[i+1]['word'] if i+1 < len(results) else ''
+                    is_vocative = prev_word in ',!;—' or next_word in ',!?;'
+                    if is_vocative:
+                        r['is_addressee'] = True
+                        r['addressee_of'] = r.get('speaker', '')
+                        if tid not in turn_addressees:
+                            turn_addressees[tid] = set()
+                        turn_addressees[tid].add(matched_speaker)
+            
+            # Speech act detection: punctuation at end of sentence
+            if r['word'] == '?' and lt == 'TEXT':
+                if tid not in turn_speech_acts:
+                    turn_speech_acts[tid] = set()
+                turn_speech_acts[tid].add('question')
+            elif r['word'] == '!' and lt == 'TEXT':
+                if tid not in turn_speech_acts:
+                    turn_speech_acts[tid] = set()
+                turn_speech_acts[tid].add('exclamation')
+        
+        # Inject addressee and speech_act into turn tokens
+        for i, r in enumerate(results):
+            tid = r.get('turn_id')
+            if tid is not None:
+                if tid in turn_addressees:
+                    r['turn_addressees'] = list(turn_addressees[tid])
+                if tid in turn_speech_acts:
+                    r['speech_acts'] = list(turn_speech_acts[tid])
+
         return {
             "status": "success",
             "data": results,
