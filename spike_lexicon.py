@@ -310,8 +310,19 @@ class SpikeLexicon:
         full_vec = mx.array(vec, dtype=mx.float32)
         try:
             matches = self.codebook.recognize(full_vec, top_k=top_k * 3)
-        except ValueError:
-            # Codebook has corrupted entries with mismatched dimensions
+        except ValueError as e:
+            # Codebook has entries with mismatched dimensions — log once
+            if not getattr(self, '_shape_error_logged', False):
+                self._shape_error_logged = True
+                # Diagnostic: find which entries have wrong shape
+                shapes = {}
+                for k, v in self.codebook._entries.items():
+                    s = tuple(v.shape)
+                    shapes.setdefault(s, []).append(k)
+                shape_summary = {str(s): len(keys) for s, keys in shapes.items()}
+                print(f"[WARN] spike_lexicon.classify: codebook shape mismatch — {e}")
+                print(f"[DIAG] Entry shapes: {shape_summary}")
+                print(f"[DIAG] query shape: {full_vec.shape}, expected uniform shape across all entries")
             return []
         
         cat_scores: dict[str, float] = {}

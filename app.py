@@ -182,10 +182,17 @@ class SentimentEngine:
 
     def get_affect(self, word: str, lemma: str = '') -> dict:
         """Return continuous affect norms from the 20K transferred lexicon.
-        Falls back to binary sentiment if word not in affect lexicon."""
+        Falls back to binary sentiment if word not in affect lexicon.
+        
+        Resolution chain: word→direct, lemma→direct, word→inflector-all-parses.
+        """
         norms = affect_lookup(word.lower())
         if not norms and lemma:
             norms = affect_lookup(lemma.lower())
+        if not norms:
+            # Full inflector resolution — catches adverbs (медленно→медленный)
+            # and other POS where lemma ≠ dict entry
+            norms = affect_lookup_lemma(word.lower())
         if norms:
             return {
                 'val': round(norms.valence, 2),
