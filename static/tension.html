@@ -300,12 +300,13 @@
             display: block;
             scroll-margin-top: 48px;
             padding-top: 12px;
-            margin: 18px 0 32px;
-            color: var(--text);
+            margin: 40px 0;
+            color: var(--primary);
             font-family: var(--font-serif);
-            font-size: 26px;
+            font-size: 24px;
             font-weight: 500;
-            letter-spacing: -0.015em;
+            letter-spacing: 0.3em;
+            text-indent: 0.3em;
             text-align: center;
         }
         .semantic-quote { quotes: '«' '»' '„' '“'; color: var(--text-muted); }
@@ -525,7 +526,7 @@
         .tok-entropy-high {
             text-decoration: underline wavy;
             text-decoration-color: var(--signal-high);
-            text-decoration-thickness: 1.5px;
+            text-decoration-thickness: 1px;
             text-underline-offset: 4px;
             border-radius: 3px;
             transition: background 0.15s;
@@ -536,7 +537,7 @@
         .tok-entropy-mid {
             text-decoration: underline auto;
             text-decoration-color: var(--signal-amber);
-            text-decoration-thickness: 1.5px;
+            text-decoration-thickness: 1px;
             text-underline-offset: 4px;
             border-radius: 3px;
             transition: background 0.15s;
@@ -547,7 +548,7 @@
         .tok-entropy-low {
             text-decoration: underline dotted;
             text-decoration-color: color-mix(in srgb, var(--signal-amber) 60%, var(--primary));
-            text-decoration-thickness: 1.5px;
+            text-decoration-thickness: 1px;
             text-underline-offset: 4px;
             border-radius: 3px;
             transition: background 0.15s;
