@@ -316,9 +316,12 @@
             text-transform: none;
         }
         .large-document-text .speaker-name::after { display: none; }
-        .large-document-text p { margin: 0 0 1em;}
-        .large-document-text p:first-child { margin-top: 0; }
-        .large-document-text h2 + p { text-indent: 0; }
+        .large-document-text p, .edit-area p {
+            margin-top: 0;
+            margin-bottom: calc(var(--spacing) * 6);
+        }
+        .large-document-text p:first-child, .edit-area p:first-child { margin-top: 0; }
+        .large-document-text h3 + p, .edit-area h3 + p { text-indent: 0; }
         .chapter-rule {
             border: 0;
             height: 1px;
