@@ -80,6 +80,8 @@
 
         *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
+        body.grayscale-mode { filter: grayscale(100%) !important; }
+
         body {
             font-family: var(--font-sans);
             background: var(--bg);
@@ -1116,6 +1118,10 @@
                         <input type="checkbox" id="chkEntropyMono" onchange="toggleEntropyMono()" style="cursor: pointer; margin: 0;">
                         <span>Ч/Б энтропия</span>
                     </label>
+                    <label class="hl-picker-item" style="cursor: pointer; display: flex; align-items: center; gap: 8px; justify-content: flex-start; margin: 0; padding: 6px 12px; font-weight: normal; color: var(--text-muted); font-size: 11px; font-family: var(--font-sans);">
+                        <input type="checkbox" id="chkUiMono" onchange="toggleUiMono()" style="cursor: pointer; margin: 0;">
+                        <span>Ч/Б интерфейс</span>
+                    </label>
                 </div>
             </div>
         </div>
@@ -1160,6 +1166,7 @@
     let editing = false;
     let lastScrollPercent = 0;
     let entropyMono = false;
+    let uiMono = false;
     let inspectorVisible = true;
     let timelineVisible = true;
     let lightTheme = false;
@@ -2646,6 +2653,14 @@
         localStorage.setItem('logos_spectrum_entropy_mono', entropyMono ? '1' : '0');
     }
 
+    function toggleUiMono() {
+        const chk = document.getElementById('chkUiMono');
+        if (!chk) return;
+        uiMono = chk.checked;
+        document.body.classList.toggle('grayscale-mode', uiMono);
+        localStorage.setItem('logos_spectrum_ui_mono', uiMono ? '1' : '0');
+    }
+
     // ── Init ──
     window.onload = () => {
         lightTheme = localStorage.getItem('logos_spectrum_theme') === 'light';
@@ -2659,6 +2674,15 @@
             if (chk) chk.checked = true;
             const pane = document.getElementById('textPane');
             if (pane) pane.classList.add('entropy-mono');
+        }
+
+        // Restore monochrome UI setting
+        const savedUiMono = localStorage.getItem('logos_spectrum_ui_mono') === '1';
+        if (savedUiMono) {
+            uiMono = true;
+            const chk = document.getElementById('chkUiMono');
+            if (chk) chk.checked = true;
+            document.body.classList.add('grayscale-mode');
         }
 
         const saved = localStorage.getItem('logos_spectrum_text');
