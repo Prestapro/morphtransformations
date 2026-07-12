@@ -794,7 +794,12 @@
         body.theme-light .btn-secondary { background: oklch(0.90 0.006 260); color: var(--text); }
         body.theme-light .btn-secondary.active, body.theme-light .btn-primary { background: var(--primary); color: var(--primary-fg); }
         body.theme-light .header, body.theme-light header { background: var(--panel); }
-        body.theme-light { --bg: oklch(0.97 0.005 260); --bg-secondary: oklch(0.95 0 0); --panel: oklch(0.94 0.006 260); --surface: oklch(0.99 0.002 260); --text: oklch(0 0 0); --text-muted: oklch(0.40 0.01 260); --text-dim: oklch(0.52 0.01 260); --border: oklch(0.2 0.01 260 / 16%); --border-subtle: oklch(0.2 0.01 260 / 9%); --primary-fg: oklch(0.98 0.005 260); }
+        body.theme-light { --bg: oklch(0.97 0.005 260); --bg-secondary: oklch(0.95 0 0); --panel: oklch(0.94 0.006 260); --surface: oklch(0.99 0.002 260); --text: oklch(0 0 0); --text-muted: oklch(0 0 0); --text-dim: oklch(0 0 0); --border: oklch(0.2 0.01 260 / 16%); --border-subtle: oklch(0.2 0.01 260 / 9%); --primary-fg: oklch(0.98 0.005 260); }
+        body.theme-light .text-content span,
+        body.theme-light .text-content span.tok-operator,
+        body.theme-light .text-content span.tok-actor {
+            color: oklch(0 0 0) !important;
+        }
         .inspector-title {
             font-family: var(--font-mono);
             font-size: 10px; text-transform: uppercase;
