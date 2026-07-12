@@ -911,6 +911,9 @@
             background: var(--panel);
             cursor: pointer;
             font: 15px/18px var(--font-sans);
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
         }
         .timeline-tool:hover { color: var(--text); background: oklch(1 0 0 / 10%); }
         body.theme-light .timeline-tool:hover { background: oklch(0.2 0.01 260 / 8%); }
@@ -2196,8 +2199,8 @@
         }
 
         let html = `<div class="timeline-toolbar" aria-label="Управление шкалой">
-            <button class="timeline-tool" title="Очистить выбор" aria-label="Очистить выбор" onclick="clearTimelineSelection()">×</button>
-            <button class="timeline-tool" title="Скрыть шкалу" aria-label="Скрыть шкалу" onclick="toggleTimeline()">−</button>
+            <button class="timeline-tool" title="Очистить выбор" aria-label="Очистить выбор" onclick="clearTimelineSelection()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="width:12px; height:12px; display:block;"><path d="M20 20H7L3 16C2 15 2 13 3 12L13 2L22 11L20 20Z"/><path d="M17 17H7"/></svg></button>
+            <button class="timeline-tool" title="Скрыть шкалу" aria-label="Скрыть шкалу" onclick="toggleTimeline()">×</button>
         </div><div class="timeline-inner">`;
         tracks.forEach(tr => {
             // A clicked track takes precedence; otherwise mirror the top highlight mode.
