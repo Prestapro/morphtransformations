@@ -276,8 +276,38 @@
         .large-document-text p { margin: 0 0 1em;}
         .large-document-text p:first-child { margin-top: 0; }
         .large-document-text h2 + p { text-indent: 0; }
-        .chapter-rule { border: 0; border-top: 1px solid var(--border); margin: 42px 0 0; }
-        .chapter-anchor { display: block; scroll-margin-top: 16px; padding-top: 18px; margin: 0 0 24px; color: var(--signal-amber); font: 600 12px var(--font-mono); letter-spacing: .04em; text-align: center; }
+        .chapter-rule {
+            border: 0;
+            height: 1px;
+            background: var(--border);
+            margin: 48px 0 24px;
+            position: relative;
+            overflow: visible;
+        }
+        .chapter-rule::after {
+            content: '';
+            position: absolute;
+            left: 50%;
+            top: 50%;
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: var(--text-dim);
+            transform: translate(-50%, -50%);
+            box-shadow: 0 0 0 12px var(--surface);
+        }
+        .chapter-anchor {
+            display: block;
+            scroll-margin-top: 48px;
+            padding-top: 12px;
+            margin: 18px 0 32px;
+            color: var(--text);
+            font-family: var(--font-serif);
+            font-size: 26px;
+            font-weight: 500;
+            letter-spacing: -0.015em;
+            text-align: center;
+        }
         .semantic-quote { quotes: '«' '»' '„' '“'; color: var(--text-muted); }
         .semantic-quote::before { content: open-quote; }
         .semantic-quote::after { content: close-quote; }
