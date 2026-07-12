@@ -342,18 +342,19 @@
             transform: translate(-50%, -50%);
             box-shadow: 0 0 0 12px var(--surface);
         }
-        .chapter-anchor {
-            display: block;
-            scroll-margin-top: 48px;
-            padding-top: 12px;
-            margin: 40px 0;
-            color: var(--primary);
-            font-family: var(--font-serif);
-            font-size: 24px;
-            font-weight: 500;
-            letter-spacing: 0.3em;
-            text-indent: 0.3em;
-            text-align: center;
+        .text-content h3.chapter-anchor,
+        .edit-area h3.chapter-anchor {
+            display: block !important;
+            scroll-margin-top: 48px !important;
+            padding-top: 12px !important;
+            margin: 40px 0 !important;
+            color: var(--primary) !important;
+            font-family: var(--font-serif) !important;
+            font-size: 24px !important;
+            font-weight: 500 !important;
+            letter-spacing: 0.3em !important;
+            text-indent: 0.3em !important;
+            text-align: center !important;
         }
         .semantic-quote { quotes: '«' '»' '„' '“'; color: var(--text-muted); }
         .semantic-quote::before { content: open-quote; }
