@@ -1585,8 +1585,12 @@
             }
         }
 
-        // Calculate sizes
-        const chCounts = chapters.map(ch => data.filter(t => Number.isFinite(t._charStart) && t._charStart >= ch.char_range[0] && t._charStart < ch.char_range[1]).length);
+        // Calculate sizes (words in full chapter range)
+        const chCounts = chapters.map((ch, idx) => {
+            const start = ch.char_range[0];
+            const end = (idx + 1 < chapters.length) ? chapters[idx + 1].char_range[0] : Infinity;
+            return data.filter(t => Number.isFinite(t._charStart) && t._charStart >= start && t._charStart < end && /^[\p{L}\p{N}]/u.test(t.word)).length;
+        });
         const maxChCount = Math.max(...chCounts, 1);
 
         const candCounts = candidates.map(ch => data.filter(t => Number.isFinite(t._charStart) && t._charStart >= ch.char_range[0] && t._charStart < ch.char_range[1]).length);
@@ -1598,7 +1602,7 @@
             const activeClass = index === activeChapterIndex ? ' active' : '';
             return `<button class="chapter-item confirmed${activeClass}" onclick="jumpToPosition(${chapter.char_range[0]})">
                 <span class="chapter-dot"></span>
-                <span style="flex-shrink:0;width:36px;font-weight:500;">${escHtml(chapter.title || `Гл. ${index + 1}`)}</span>
+                <span style="flex-shrink:0;min-width:44px;margin-right:8px;font-weight:500;">${escHtml(chapter.title || `Гл. ${index + 1}`)}</span>
                 <span class="chapter-bar-container">
                     <span class="chapter-bar" style="display:block;width:${pct}%"></span>
                 </span>
@@ -1611,7 +1615,7 @@
             const pct = (count / maxCandCount) * 100;
             return `<button class="chapter-item unknown" onclick="jumpToPosition(${chapter.char_range[0]})">
                 <span class="chapter-dot"></span>
-                <span style="flex-shrink:0;width:36px;font-weight:500;">${escHtml(chapter.title)}</span>
+                <span style="flex-shrink:0;min-width:44px;margin-right:8px;font-weight:500;">${escHtml(chapter.title)}</span>
                 <span class="chapter-bar-container">
                     <span class="chapter-bar" style="display:block;width:${pct}%"></span>
                 </span>
