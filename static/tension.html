@@ -1662,7 +1662,7 @@
                 const title = chapterStarts.get(charStart);
                 if (title) {
                     flushParagraph();
-                    parts.push(`<hr class="chapter-rule" aria-hidden="true"><h2 class="chapter-anchor" id="chapter-${charStart}">${escHtml(title)}</h2>`);
+                    parts.push(`<hr class="chapter-rule" aria-hidden="true"><h3 class="chapter-anchor" id="chapter-${charStart}">${escHtml(title)}</h3>`);
                     const lineEnd = originalText.indexOf('\n', charStart);
                     chapterSkipEnd = lineEnd >= 0 ? lineEnd + 1 : originalText.length;
                 }
