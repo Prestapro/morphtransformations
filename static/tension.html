@@ -603,7 +603,24 @@
         .tok-entropy-low:hover {
             background-color: color-mix(in srgb, var(--signal-low) 10%, transparent);
         }
-
+        .entropy-mono .tok-entropy-high {
+            text-decoration-color: var(--text) !important;
+        }
+        .entropy-mono .tok-entropy-high:hover {
+            background-color: color-mix(in srgb, var(--text) 8%, transparent) !important;
+        }
+        .entropy-mono .tok-entropy-mid {
+            text-decoration-color: var(--text-muted) !important;
+        }
+        .entropy-mono .tok-entropy-mid:hover {
+            background-color: color-mix(in srgb, var(--text-muted) 8%, transparent) !important;
+        }
+        .entropy-mono .tok-entropy-low {
+            text-decoration-color: var(--text-dim) !important;
+        }
+        .entropy-mono .tok-entropy-low:hover {
+            background-color: color-mix(in srgb, var(--text-dim) 8%, transparent) !important;
+        }
         /* ── Highlight Modes ── */
         /* Reset helpers — hide specific highlight types */
         .hl-hide-entropy .tok-entropy-high,
@@ -1094,6 +1111,11 @@
                     <button class="hl-picker-item" data-mode="clean" onclick="setHlMode('clean')">
                         <span class="hl-picker-dot" style="background:var(--text-dim)"></span> Чисто
                     </button>
+                    <div style="height: 1px; background: var(--border); margin: 6px 0;"></div>
+                    <label class="hl-picker-item" style="cursor: pointer; display: flex; align-items: center; gap: 8px; justify-content: flex-start; margin: 0; padding: 6px 12px; font-weight: normal; color: var(--text-muted); font-size: 11px; font-family: var(--font-sans);">
+                        <input type="checkbox" id="chkEntropyMono" onchange="toggleEntropyMono()" style="cursor: pointer; margin: 0;">
+                        <span>Ч/Б энтропия</span>
+                    </label>
                 </div>
             </div>
         </div>
@@ -1137,6 +1159,7 @@
     let originalText = ''; // preserved for whitespace recovery
     let editing = false;
     let lastScrollPercent = 0;
+    let entropyMono = false;
     let inspectorVisible = true;
     let timelineVisible = true;
     let lightTheme = false;
@@ -2612,10 +2635,32 @@
         toast('Script exported!');
     }
 
+    function toggleEntropyMono() {
+        const chk = document.getElementById('chkEntropyMono');
+        if (!chk) return;
+        entropyMono = chk.checked;
+        const pane = document.getElementById('textPane');
+        if (pane) {
+            pane.classList.toggle('entropy-mono', entropyMono);
+        }
+        localStorage.setItem('logos_spectrum_entropy_mono', entropyMono ? '1' : '0');
+    }
+
     // ── Init ──
     window.onload = () => {
         lightTheme = localStorage.getItem('logos_spectrum_theme') === 'light';
         document.body.classList.toggle('theme-light', lightTheme);
+        
+        // Restore monochrome entropy setting
+        const savedMono = localStorage.getItem('logos_spectrum_entropy_mono') === '1';
+        if (savedMono) {
+            entropyMono = true;
+            const chk = document.getElementById('chkEntropyMono');
+            if (chk) chk.checked = true;
+            const pane = document.getElementById('textPane');
+            if (pane) pane.classList.add('entropy-mono');
+        }
+
         const saved = localStorage.getItem('logos_spectrum_text');
         if (saved) {
             analyze(saved);
