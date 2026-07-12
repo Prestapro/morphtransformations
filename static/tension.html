@@ -18,7 +18,7 @@
             --border: oklch(1 0 0 / 9%);
             --border-subtle: oklch(1 0 0 / 5%);
 
-            --text: oklch(0.93 0.005 260);
+            --text: oklch(1 0 0);
             --text-muted: oklch(0.62 0.01 260);
             --text-dim: oklch(0.45 0.008 260);
 
@@ -596,14 +596,14 @@
         }
         .tok-entropy-low {
             text-decoration: underline dotted;
-            text-decoration-color: var(--signal-low);
-            text-decoration-thickness: 1px;
-            text-underline-offset: 4px;
+            text-decoration-color: var(--text-muted);
+            text-decoration-thickness: 2px;
+            text-underline-offset: 5px;
             border-radius: 3px;
             transition: background 0.15s;
         }
         .tok-entropy-low:hover {
-            background-color: color-mix(in srgb, var(--signal-low) 10%, transparent);
+            background-color: color-mix(in srgb, var(--text-muted) 10%, transparent);
         }
         .entropy-mono .tok-entropy-high {
             text-decoration-color: var(--text) !important;
@@ -794,7 +794,7 @@
         body.theme-light .btn-secondary { background: oklch(0.90 0.006 260); color: var(--text); }
         body.theme-light .btn-secondary.active, body.theme-light .btn-primary { background: var(--primary); color: var(--primary-fg); }
         body.theme-light .header, body.theme-light header { background: var(--panel); }
-        body.theme-light { --bg: oklch(0.97 0.005 260); --bg-secondary: oklch(0.95 0 0); --panel: oklch(0.94 0.006 260); --surface: oklch(0.99 0.002 260); --text: oklch(0.18 0.01 260); --text-muted: oklch(0.40 0.01 260); --text-dim: oklch(0.52 0.01 260); --border: oklch(0.2 0.01 260 / 16%); --border-subtle: oklch(0.2 0.01 260 / 9%); --primary-fg: oklch(0.98 0.005 260); }
+        body.theme-light { --bg: oklch(0.97 0.005 260); --bg-secondary: oklch(0.95 0 0); --panel: oklch(0.94 0.006 260); --surface: oklch(0.99 0.002 260); --text: oklch(0 0 0); --text-muted: oklch(0.40 0.01 260); --text-dim: oklch(0.52 0.01 260); --border: oklch(0.2 0.01 260 / 16%); --border-subtle: oklch(0.2 0.01 260 / 9%); --primary-fg: oklch(0.98 0.005 260); }
         .inspector-title {
             font-family: var(--font-mono);
             font-size: 10px; text-transform: uppercase;
