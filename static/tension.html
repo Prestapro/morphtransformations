@@ -6,7 +6,7 @@
     <meta name="color-scheme" content="dark">
     <title>Logos Spectrum v5.2 — Narrative DAW</title>
     <meta name="description" content="Монтажный анализ текста: энтропия, операторы, сентимент, актёры и диалоги.">
-    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Inter:wght@300;400;500;600&family=Literata:ital,wght@0,400;0,500;0,600;1,400&display=swap" rel="stylesheet">
     <style>
         /* ═══════════════════════════════════════════════════
            Logos Spectrum v5.2 — Narrative DAW Design System
@@ -32,8 +32,11 @@
             --signal-amber: oklch(0.78 0.14 85);
 
             --accent-bg: oklch(0.24 0.02 250);
+            --selection-bg: oklch(0.68 0.17 250 / 24%);
+            --selection-border: oklch(0.78 0.14 85 / 80%);
 
             --font-sans: 'Inter', system-ui, sans-serif;
+            --font-serif: 'Literata', 'Georgia', serif;
             --font-mono: 'JetBrains Mono', monospace;
             --radius: 6px;
 
@@ -115,6 +118,7 @@
             color: var(--primary-fg);
         }
         .btn-secondary.dimmed { opacity: 0.6; }
+        .ui-icon { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 
         /* ── Main area ───────────────────────────────── */
         .main-area {
@@ -123,6 +127,93 @@
             min-height: 0;
             overflow: hidden;
         }
+        .library-sidebar {
+            width: 248px;
+            flex: 0 0 248px;
+            background: var(--panel);
+            border-right: 1px solid var(--border);
+            overflow-y: auto;
+            padding: 18px 12px;
+        }
+        .library-kicker { font: 10px var(--font-mono); letter-spacing: 1.4px; text-transform: uppercase; color: var(--text-dim); margin-bottom: 10px; }
+        .library-title { font-size: 16px; line-height: 1.3; font-weight: 600; color: var(--text); margin-bottom: 4px; }
+        .text-content h1, .text-content h2, .text-content h3, .text-content h4, .text-content h5, .text-content h6 { font-family: var(--font-sans); text-align: center; color: var(--text); line-height: 1.25; font-weight: 600; }
+        .text-content h1 { font-size: 2rem; margin: 2.2rem 0 1.2rem; }
+        .text-content h2 { font-size: 1.5rem; margin: 1.8rem 0 1rem; }
+        .text-content h3 { font-size: 1.25rem; margin: 1.5rem 0 .8rem; }
+        .text-content h4 { font-size: 1.1rem; margin: 1.2rem 0 .6rem; }
+        .text-content h5 { font-size: 1rem; margin: 1rem 0 .5rem; }
+        .text-content h6 { font-size: .9rem; margin: .8rem 0 .4rem; }
+        .library-author { font-size: 12px; color: var(--text-muted); margin-bottom: 18px; }
+        .library-meta { font: 10px var(--font-mono); color: var(--text-dim); padding: 8px 0; border-top: 1px solid var(--border-subtle); border-bottom: 1px solid var(--border-subtle); margin-bottom: 12px; }
+        .chapter-list { display: flex; flex-direction: column; gap: 3px; }
+        .chapter-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            width: 100%;
+            border: 0;
+            border-radius: var(--radius);
+            padding: 6px 8px;
+            text-align: left;
+            color: var(--text-muted);
+            background: transparent;
+            cursor: pointer;
+            font: 11px var(--font-sans);
+            transition: background 0.15s, color 0.15s;
+        }
+        .chapter-item:hover {
+            background: var(--surface);
+            color: var(--text);
+        }
+        .chapter-item.active {
+            background: color-mix(in srgb, var(--primary) 12%, transparent);
+            color: var(--primary);
+        }
+        .chapter-dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            flex-shrink: 0;
+            background: var(--text-dim);
+            transition: background 0.15s;
+        }
+        .chapter-item.confirmed .chapter-dot {
+            background: var(--primary);
+        }
+        .chapter-item.unknown .chapter-dot {
+            background: var(--signal-amber);
+        }
+        .chapter-bar-container {
+            height: 4px;
+            flex: 1;
+            overflow: hidden;
+            border-radius: 2px;
+            background: var(--border-subtle);
+        }
+        .chapter-bar {
+            height: 100%;
+            border-radius: 2px;
+            background: var(--text-dim);
+            opacity: 0.5;
+        }
+        .chapter-item.confirmed .chapter-bar {
+            background: var(--primary);
+            opacity: 0.7;
+        }
+        .chapter-item.unknown .chapter-bar {
+            background: var(--signal-amber);
+            opacity: 0.7;
+        }
+        .chapter-count {
+            width: 32px;
+            text-align: right;
+            font-family: var(--font-mono);
+            font-size: 10px;
+            color: var(--text-dim);
+        }
+        .chapter-empty { color: var(--text-dim); font-size: 11px; line-height: 1.5; padding: 8px 2px; }
+        @media (max-width: 760px) { .library-sidebar { width: 190px; flex-basis: 190px; } }
 
         /* ── Text Pane ───────────────────────────────── */
         .text-pane {
@@ -130,15 +221,22 @@
             overflow-y: auto;
             padding: 32px;
             min-width: 0;
+            background: var(--bg-secondary);
         }
-        .text-pane.editing { padding: 0; }
+        .text-pane.editing { padding: 32px; }
+        .text-pane.editing .edit-textarea { display: block; width: min(100%, 720px); margin: 0 auto; padding: 24px 48px; box-sizing: border-box; }
         .text-content {
             display: block;
-            max-width: 680px;
+            /* A4-like reading page: Word's normal 1-inch side margins. */
+            max-width: 794px;
+            min-height: calc(100% - 64px);
             margin: 0 auto;
-            padding: 24px 48px;
-            font-size: 15.5px;
-            line-height: 1.8;
+            padding: 72px 96px;
+            box-shadow: 0 16px 48px -24px rgb(0 0 0 / 50%);
+            border: 1px solid var(--border-subtle);
+            font-family: var(--font-serif);
+            font-size: 17px;
+            line-height: 1.75;
             white-space: pre-wrap;
             word-wrap: break-word;
             overflow-wrap: break-word;
@@ -149,7 +247,46 @@
             text-justify: inter-word;
             letter-spacing: 0.01em;
             box-sizing: border-box;
+            background: var(--surface);
         }
+        @media (max-width: 900px) {
+            .text-pane { padding: 16px; }
+            .text-content { padding: 48px 56px; }
+        }
+        @media (max-width: 600px) {
+            .text-pane { padding: 0; }
+            .text-content { padding: 32px 24px; box-shadow: none; }
+        }
+        .large-document-text { white-space: normal; text-align: left; }
+        /* Large-document rendering emits structural classes token by token.
+           Keep them inline so a false/partial line classification cannot turn
+           every token into a separate block; real chapter headings use h2. */
+        .large-document-text .speaker-name,
+        .large-document-text .act-header {
+            display: inline;
+            margin: 0;
+            padding: 0;
+            border: 0;
+            font: inherit;
+            letter-spacing: inherit;
+            text-align: inherit;
+            text-transform: none;
+        }
+        .large-document-text .speaker-name::after { display: none; }
+        .large-document-text p { margin: 0 0 1em;}
+        .large-document-text p:first-child { margin-top: 0; }
+        .large-document-text h2 + p { text-indent: 0; }
+        .chapter-rule { border: 0; border-top: 1px solid var(--border); margin: 42px 0 0; }
+        .chapter-anchor { display: block; scroll-margin-top: 16px; padding-top: 18px; margin: 0 0 24px; color: var(--signal-amber); font: 600 12px var(--font-mono); letter-spacing: .04em; text-align: center; }
+        .semantic-quote { quotes: '«' '»' '„' '“'; color: var(--text-muted); }
+        .semantic-quote::before { content: open-quote; }
+        .semantic-quote::after { content: close-quote; }
+        .semantic-blockquote { margin: 1.5rem 1rem; padding: .8rem 1.2rem; border-left: 3px solid var(--primary); color: var(--text-muted); font-style: italic; }
+        .semantic-cite { font-style: italic; color: var(--signal-amber); }
+        .semantic-list { margin: .8rem 0 .8rem 1.8rem; }
+        .semantic-mark { background: oklch(0.78 0.14 85 / 22%); color: var(--text); padding: 0 .12em; }
+        .semantic-underline { text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 2px; }
+        .semantic-code { font-family: var(--font-mono); font-size: .9em; color: var(--primary); }
         .text-content .para-break + .clip-span,
         .text-content .clip-span:first-child {
             text-indent: 1.5em;
@@ -176,8 +313,18 @@
         }
         .clip-span:hover { background: oklch(0.22 0.006 260 / 60%); }
         .clip-span.selected {
-            background: var(--accent-bg);
-            outline: 1px solid oklch(0.68 0.17 250 / 30%);
+            background: var(--selection-bg);
+            outline: 2px solid var(--selection-border);
+            outline-offset: 1px;
+            box-shadow: 0 0 0 2px oklch(0.68 0.17 250 / 18%);
+        }
+        .t-cell.sel {
+            background: var(--selection-bg) !important;
+            box-shadow: inset 0 -2px 0 var(--selection-border);
+        }
+        body.theme-light {
+            --selection-bg: oklch(0.68 0.17 250 / 22%);
+            --selection-border: oklch(0.48 0.18 250 / 90%);
         }
         .clip-span.focus-dimmed {
             opacity: 0.2;
@@ -186,6 +333,11 @@
         .clip-span.focus-bright {
             opacity: 1;
             transition: opacity 0.25s;
+        }
+        .large-document-text .clip-selected-token {
+            background: var(--selection-bg);
+            outline: 1px solid var(--selection-border);
+            border-radius: 3px;
         }
         .clip-span.is-dialogue { font-style: italic; }
 
@@ -264,7 +416,6 @@
         .stage-direction {
             display: inline;
             font-style: italic;
-            font-size: 13px;
             color: var(--text-dim);
             letter-spacing: 0.03em;
         }
@@ -329,12 +480,39 @@
             color: var(--text-muted);
             border: 1px solid var(--border-subtle);
         }
-        .tok-actor { font-weight: 500; }
+        .tok-actor {
+            font-weight: 500;
+            text-decoration: underline;
+            text-decoration-color: color-mix(in srgb, var(--primary) 50%, transparent);
+            text-decoration-thickness: 2px;
+            text-underline-offset: 4px;
+            border-radius: 3px;
+            transition: background 0.15s;
+        }
+        .tok-actor:hover {
+            background-color: color-mix(in srgb, var(--primary) 12%, transparent);
+        }
         .tok-entropy-high {
-            border-bottom: 2px solid var(--signal-high);
+            text-decoration: underline wavy;
+            text-decoration-color: var(--signal-high);
+            text-decoration-thickness: 1px;
+            text-underline-offset: 4px;
+            border-radius: 3px;
+            transition: background 0.15s;
+        }
+        .tok-entropy-high:hover {
+            background-color: color-mix(in srgb, var(--signal-high) 10%, transparent);
         }
         .tok-entropy-mid {
-            border-bottom: 2px solid var(--signal-amber);
+            text-decoration: underline wavy;
+            text-decoration-color: var(--signal-amber);
+            text-decoration-thickness: 1px;
+            text-underline-offset: 4px;
+            border-radius: 3px;
+            transition: background 0.15s;
+        }
+        .tok-entropy-mid:hover {
+            background-color: color-mix(in srgb, var(--signal-amber) 10%, transparent);
         }
 
         /* ── Highlight Modes ── */
@@ -365,10 +543,21 @@
         }
 
         /* Mode: Roles — only actors + speakers */
-        .hl-roles { /* actors visible */ }
+        .hl-roles .tok-actor,
+        .hl-roles .speaker-name {
+            color: var(--primary) !important;
+            background: oklch(0.68 0.17 250 / 16%);
+            text-decoration: underline;
+            text-decoration-color: var(--primary);
+            text-decoration-thickness: 2px;
+            text-underline-offset: 4px;
+            font-weight: 600;
+        }
         .hl-roles .tok-entropy-high,
         .hl-roles .tok-entropy-mid { border-bottom: none; }
         .hl-roles .tok-operator { color: var(--text) !important; background: none !important; }
+        .hl-roles .stage-direction,
+        .hl-roles .act-header { color: var(--text) !important; background: none !important; }
 
         /* Mode: Entropy — only entropy underlines */
         .hl-entropy { /* entropy visible */ }
@@ -377,11 +566,23 @@
         .hl-entropy .speaker-name { color: var(--text-muted) !important; }
         .hl-entropy .speaker-name::after { display: none; }
 
-        /* Mode: Structure — only headers, speakers, stage dirs */
+        /* Mode: Structure — emphasize structural markers, mute semantic layers. */
         .hl-structure .tok-entropy-high,
         .hl-structure .tok-entropy-mid { border-bottom: none; }
-        .hl-structure .tok-operator { color: var(--text) !important; background: none !important; }
-        .hl-structure .tok-actor { color: var(--text) !important; font-weight: inherit; }
+        .hl-structure .tok-operator,
+        .hl-structure .tok-actor { color: var(--text) !important; background: none !important; font-weight: inherit; }
+        .hl-structure .speaker-name,
+        .hl-structure .act-header,
+        .hl-structure .stage-direction {
+            color: var(--signal-amber) !important;
+            background: oklch(0.78 0.14 85 / 12%);
+            border-bottom: 2px solid var(--signal-amber);
+            font-weight: 600;
+        }
+        .hl-structure .speaker-name::after { background: var(--signal-amber); }
+        .hl-structure .stage-direction { color: var(--signal-low) !important; background: oklch(0.72 0.17 150 / 12%); border-bottom-color: var(--signal-low); }
+        .hl-structure .para-break-md,
+        .hl-structure .para-break-lg { opacity: 1; }
         .hl-structure .tok-turn { background: none !important; }
 
         /* Mode: Entropy — hide roles/turns */
@@ -400,6 +601,11 @@
         .hl-clean .act-header { color: var(--text); }
 
         /* Highlight mode picker popover */
+        body.theme-light .hl-picker { background: var(--panel); border-color: var(--border); box-shadow: 0 8px 24px oklch(0 0 0 / 16%); }
+        body.theme-light .hl-picker-item:hover { background: oklch(0.2 0.01 260 / 8%); }
+        body.theme-light .genre-badge { background: var(--surface); }
+        body.theme-light .actor-block { opacity: .9; }
+        body.theme-light .dial-block { background: oklch(0.35 0.02 260 / 18%); }
         .hl-picker {
             position: absolute;
             top: 100%;
@@ -450,9 +656,13 @@
             background: var(--bg);
             color: var(--text);
             border: none; outline: none;
-            padding: 32px;
+            padding: 24px 48px;
             font-family: var(--font-sans);
-            font-size: 15px; line-height: 1.75;
+            font-size: 16px; line-height: 1.7;
+            letter-spacing: 0.01em;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            overflow-wrap: break-word;
             resize: none;
         }
         .edit-textarea::placeholder { color: var(--text-dim); }
@@ -468,7 +678,13 @@
             display: flex;
             flex-direction: column;
         }
-        .inspector.hidden { display: none; }
+        .inspector.hidden { visibility: hidden; opacity: 0; pointer-events: none; }
+        .large-timeline-summary { height: 48px; display:flex; align-items:center; justify-content:space-around; color:var(--text-muted); background:var(--panel); border-top:1px solid var(--border); font:11px var(--font-mono); }
+        body.theme-light .inspector-clip-text { background: var(--surface); }
+        body.theme-light .btn-secondary { background: oklch(0.90 0.006 260); color: var(--text); }
+        body.theme-light .btn-secondary.active, body.theme-light .btn-primary { background: var(--primary); color: var(--primary-fg); }
+        body.theme-light .header, body.theme-light header { background: var(--panel); }
+        body.theme-light { --bg: oklch(0.97 0.005 260); --bg-secondary: oklch(0.95 0 0); --panel: oklch(0.94 0.006 260); --surface: oklch(0.99 0.002 260); --text: oklch(0.18 0.01 260); --text-muted: oklch(0.40 0.01 260); --text-dim: oklch(0.52 0.01 260); --border: oklch(0.2 0.01 260 / 16%); --border-subtle: oklch(0.2 0.01 260 / 9%); --primary-fg: oklch(0.98 0.005 260); }
         .inspector-title {
             font-family: var(--font-mono);
             font-size: 10px; text-transform: uppercase;
@@ -524,14 +740,16 @@
         }
         .insp-actor-badge {
             display: inline-block;
-            background: oklch(0.22 0.006 260);
+            background: var(--surface);
+            color: var(--text);
             padding: 2px 8px; border-radius: 3px;
             font-family: var(--font-mono);
             font-size: 11px; margin: 2px;
         }
         .insp-bar-track {
             height: 6px; flex: 1;
-            background: oklch(0.22 0.006 260);
+            background: var(--surface);
+            border: 1px solid var(--border-subtle);
             border-radius: 3px; overflow: hidden;
         }
         .insp-bar-fill {
@@ -557,6 +775,32 @@
             scrollbar-color: oklch(1 0 0 / 12%) transparent;
         }
         .timeline-inner { min-width: max-content; }
+        .timeline-toolbar {
+            position: sticky;
+            top: 0;
+            z-index: 20;
+            height: 24px;
+            display: flex;
+            justify-content: flex-end;
+            align-items: center;
+            gap: 6px;
+            padding: 0 8px;
+            border-bottom: 1px solid var(--border);
+            box-shadow: 0 1px 3px rgb(0 0 0 / 16%);
+        }
+        .timeline-tool {
+            width: 20px;
+            height: 20px;
+            padding: 0;
+            border: 1px solid var(--border);
+            border-radius: 3px;
+            color: var(--text-muted);
+            background: var(--panel);
+            cursor: pointer;
+            font: 15px/18px var(--font-sans);
+        }
+        .timeline-tool:hover { color: var(--text); background: oklch(1 0 0 / 10%); }
+        body.theme-light .timeline-tool:hover { background: oklch(0.2 0.01 260 / 8%); }
 
         /* Track row */
         .t-row {
@@ -581,8 +825,15 @@
         }
         .t-label:hover { color: var(--text-muted); background: oklch(0.20 0.005 260); }
         .t-label.focused {
-            color: var(--text);
-            background: oklch(0.22 0.008 260);
+            color: var(--signal-amber);
+            background: oklch(0.78 0.14 85 / 14%);
+            box-shadow: inset 3px 0 0 var(--signal-amber);
+        }
+        body.theme-light .t-label:hover { color: var(--text); background: oklch(0.2 0.01 260 / 8%); }
+        body.theme-light .t-label.focused {
+            color: oklch(0.42 0.16 250);
+            background: oklch(0.68 0.17 250 / 14%);
+            box-shadow: inset 3px 0 0 oklch(0.48 0.18 250);
         }
 
         /* Dimmed rows when a track is solo'd */
@@ -594,6 +845,13 @@
         .t-row.t-focused {
             opacity: 1;
             filter: none;
+        }
+        .t-row.t-dimmed .t-cell.sel {
+            background: oklch(0.45 0.01 260 / 18%) !important;
+            box-shadow: none;
+        }
+        body.theme-light .t-row.t-dimmed .t-cell.sel {
+            background: oklch(0.2 0.01 260 / 8%) !important;
         }
         .t-row.t-dimmed .t-label {
             cursor: pointer;
@@ -619,7 +877,15 @@
             transition: background 0.12s;
         }
         .t-cell:hover { background: oklch(0.22 0.006 260 / 50%); }
-        .t-cell.sel { background: var(--accent-bg); }
+        .t-cell.sel { background: var(--selection-bg) !important; box-shadow: inset 0 -2px 0 var(--selection-border); }
+        body.theme-light .t-cell:hover { background: oklch(0.68 0.17 250 / 16%); }
+        body.theme-light .t-cell.sel { background: oklch(0.68 0.17 250 / 24%) !important; }
+        .t-row-ruler .t-label,
+        .t-row-ruler .t-cell { transition: opacity 0.2s, background 0.2s, color 0.2s; }
+        .t-row-ruler.t-dimmed { opacity: 0.45; filter: none; }
+        .t-row-ruler.t-focused { opacity: 1; }
+        body.theme-light .t-row-ruler .t-label { color: var(--text-muted); }
+        body.theme-light .t-row-ruler .t-label.focused { color: oklch(0.42 0.16 250); }
 
         /* Clip ruler */
         .t-row-ruler .t-cell {
@@ -707,12 +973,16 @@
         <span class="header-sub">Narrative DAW · Entropy Gate</span>
         <div class="header-right">
             <span class="header-stats" id="stats"></span>
+            <button class="btn btn-secondary" id="btnDownloadText" onclick="downloadText()" title="Скачать исходный текст" aria-label="Скачать текст">⇩ Текст</button>
+            <button class="btn btn-secondary" id="btnDownloadRoles" onclick="downloadRoles()" title="Скачать все роли" aria-label="Скачать роли">⇩ Роли</button>
             <button class="btn btn-secondary" id="btnDownload" onclick="downloadScript()">Скачать</button>
             <button class="btn btn-secondary" id="btnEdit" onclick="toggleEdit()">Правка</button>
             <button class="btn btn-secondary" id="btnInsp" onclick="toggleInspector()">Инспектор</button>
+            <button class="btn btn-secondary" id="btnTimeline" onclick="toggleTimeline()" title="Скрыть или показать нижнюю панель">Шкала</button>
+            <button class="btn btn-secondary" id="btnTheme" onclick="toggleTheme()" title="Светлая/тёмная тема">Тема</button>
             <div style="position:relative;display:inline-block;">
                 <button class="btn btn-secondary" id="btnHighlights" onclick="toggleHlPicker()" title="Режим подсветки" style="font-size:15px;padding:4px 10px;gap:4px;display:inline-flex;align-items:center;">
-                    👁 <span id="hlModeLabel" style="font-size:11px;">Все</span>
+                    <svg class="ui-icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z"/><circle cx="12" cy="12" r="2.5"/></svg><span id="hlModeLabel" style="font-size:11px;">Все</span>
                 </button>
                 <div class="hl-picker" id="hlPicker">
                     <button class="hl-picker-item active" data-mode="all" onclick="setHlMode('all')">
@@ -739,6 +1009,7 @@
 
     <!-- ═══ Main ═══ -->
     <div class="main-area">
+        <aside class="library-sidebar" id="librarySidebar" aria-label="Произведение и главы"></aside>
         <section class="text-pane" id="textPane" aria-label="Текст"></section>
         <aside class="inspector" id="inspector" aria-label="Инспектор"></aside>
     </div>
@@ -772,6 +1043,8 @@
     let originalText = ''; // preserved for whitespace recovery
     let editing = false;
     let inspectorVisible = true;
+    let timelineVisible = true;
+    let lightTheme = false;
     let selectedClip = null;
     let focusedTrack = null; // {id, actorName?} — solo'd track
     let actorList = [];   // [{name, count}]
@@ -782,6 +1055,14 @@
     let dialogueFormat = 'unknown'; // drama / prose_em / prose_q / mixed
     let plotArc = null;     // {tensions, stages, events, diagnostics, beauty_score, ...}
     let textSegments = [];  // [{after_token, type, level, reason}] from server
+    let entities = [];      // observable entity salience from server
+    let scenes = [];        // scene participants with ternary knowledge status
+    let referenceStability = null;
+    let documentStructure = [];
+    let workTitle = '';
+    let workAuthor = '';
+    const LARGE_DOCUMENT_TOKEN_LIMIT = 8000; // Keep full text interaction within browser rendering limits.
+    let largeDocument = false;
 
     const SAMPLE = `Утро в доме Фамусова начиналось тихо. Софья сидела у окна и смотрела на пустую улицу, где медленно таял ночной туман. Однако тишина была обманчива: в передней уже слышались быстрые шаги.
 
@@ -815,23 +1096,30 @@
         setTimeout(() => t.classList.remove('show'), 1200);
     }
     function entropyColor(h, alpha=1) {
-        const t = Math.max(0, Math.min(10, h)) / 10;
-        const hue = 150 - t * 125;
-        return `oklch(${0.68+t*0.02} ${0.14+t*0.06} ${hue} / ${alpha})`;
+        // Full cold-to-hot spectrum: violet → blue → magenta → red → orange.
+        const t = Math.max(0, Math.min(10, Number(h) || 0)) / 10;
+        const hue = 285 - t * 270;
+        const lightness = 0.40 + t * 0.38;
+        const chroma = 0.18 + t * 0.16;
+        return `oklch(${lightness.toFixed(3)} ${chroma.toFixed(3)} ${hue.toFixed(1)} / ${alpha})`;
     }
     function arousalColor(a, alpha=1) {
-        // 1=calm(blue-green) → 9=excited(red-orange)
-        if (!a || isNaN(a)) return `oklch(0.60 0.12 180 / ${alpha})`;
+        // 1=deep blue calm → 9=bright red-orange excitation.
+        if (!a || isNaN(a)) return `oklch(0.46 0.16 220 / ${alpha})`;
         const t = Math.max(0, Math.min(1, (a - 1) / 8));
-        const hue = 180 - t * 160; // 180 (teal) → 20 (red)
-        return `oklch(${0.60+t*0.12} ${0.12+t*0.10} ${hue} / ${alpha})`;
+        const hue = 225 - t * 205;
+        const lightness = 0.42 + t * 0.34;
+        const chroma = 0.16 + t * 0.14;
+        return `oklch(${lightness.toFixed(3)} ${chroma.toFixed(3)} ${hue.toFixed(1)} / ${alpha})`;
     }
     function concColor(c, alpha=1) {
-        // 1=abstract(violet) → 5=concrete(amber)
-        if (!c || isNaN(c)) return `oklch(0.58 0.12 300 / ${alpha})`;
+        // 1=deep violet abstraction → 5=bright amber concreteness.
+        if (!c || isNaN(c)) return `oklch(0.42 0.18 305 / ${alpha})`;
         const t = Math.max(0, Math.min(1, (c - 1) / 4));
-        const hue = 300 - t * 215; // 300 (violet) → 85 (amber)
-        return `oklch(${0.58+t*0.16} ${0.12+t*0.06} ${hue} / ${alpha})`;
+        const hue = 305 - t * 220;
+        const lightness = 0.42 + t * 0.34;
+        const chroma = 0.18 + t * 0.12;
+        return `oklch(${lightness.toFixed(3)} ${chroma.toFixed(3)} ${hue.toFixed(1)} / ${alpha})`;
     }
 
     // ── Map token positions back to original text for whitespace recovery ──
@@ -842,12 +1130,14 @@
             if (idx >= 0 && idx < pos + 200) {
                 // Found within reasonable distance
                 t._gap = originalText.slice(pos, idx);
+                t._charStart = idx;
                 pos = idx + t.word.length;
             } else {
                 // Try from current pos with small lookahead (handles minor mismatches)
                 const near = originalText.indexOf(t.word, Math.max(0, pos - 5));
                 if (near >= 0 && near < pos + 100) {
                     t._gap = originalText.slice(pos, near);
+                    t._charStart = near;
                     pos = near + t.word.length;
                 } else {
                     t._gap = ' '; // fallback
@@ -899,7 +1189,7 @@
         // Actors — combine entity detection + speaker metadata
         const counts = {};
         data.forEach(t => {
-            if (t.is_entity && t.confidence >= 0.6) {
+            if (t.is_entity && t.entity_type === 'person' && t.confidence >= 0.6) {
                 counts[t.clean] = (counts[t.clean] || 0) + 1;
             }
             // Also count speaker names (these come from structural detection)
@@ -943,6 +1233,9 @@
             const isStructural = t.line_type === 'HEADER' || t.line_type === 'CHARACTERS_LINE' 
                                  || t.line_type === 'SPEAKER' || t.line_type === 'STAGE_DIRECTION';
             if (t.is_entity && t.confidence >= 0.6 && !isStructural) actors.add(t.clean);
+            // Speaker identity is propagated to dialogue tokens by the API;
+            // include it so role tracks have visible cells, not only labels.
+            if (t.speaker && !isStructural) actors.add(t.speaker);
             if (t.is_dialogue && !isStructural) hasDial = true;
         });
         c.wordCount = words;
@@ -996,38 +1289,231 @@
     }
 
     // ── API ──
+    const ANALYSIS_CACHE_DB = 'logos_spectrum';
+    const ANALYSIS_CACHE_STORE = 'analysis_v2';
+    let activeAnalysisController = null;
+
+    function analysisCacheKey(text) {
+        let hash = 2166136261;
+        for (let i = 0; i < text.length; i++) {
+            hash ^= text.charCodeAt(i);
+            hash = Math.imul(hash, 16777619);
+        }
+        return `${text.length}:${(hash >>> 0).toString(16)}`;
+    }
+
+    function openAnalysisCache() {
+        return new Promise((resolve, reject) => {
+            const request = indexedDB.open(ANALYSIS_CACHE_DB, 2);
+            request.onupgradeneeded = () => {
+                if (!request.result.objectStoreNames.contains(ANALYSIS_CACHE_STORE)) {
+                    request.result.createObjectStore(ANALYSIS_CACHE_STORE);
+                }
+            };
+            request.onsuccess = () => resolve(request.result);
+            request.onerror = () => reject(request.error);
+        });
+    }
+
+    async function readCachedAnalysis(key) {
+        const db = await openAnalysisCache();
+        return new Promise((resolve, reject) => {
+            const request = db.transaction(ANALYSIS_CACHE_STORE, 'readonly')
+                .objectStore(ANALYSIS_CACHE_STORE).get(key);
+            request.onsuccess = () => resolve(request.result || null);
+            request.onerror = () => reject(request.error);
+        });
+    }
+
+    async function writeCachedAnalysis(key, response) {
+        const db = await openAnalysisCache();
+        return new Promise((resolve, reject) => {
+            const request = db.transaction(ANALYSIS_CACHE_STORE, 'readwrite')
+                .objectStore(ANALYSIS_CACHE_STORE).put(response, key);
+            request.onsuccess = () => resolve();
+            request.onerror = () => reject(request.error);
+        });
+    }
+
+    function applyAnalysis(text, json) {
+        originalText = text;
+        if (json.data) {
+            data = json.data;
+            largeDocument = data.length > LARGE_DOCUMENT_TOKEN_LIMIT;
+            stylometry = json.stylometry || null;
+            rhythm = json.rhythm || [];
+            genre = json.genre || 'prose';
+            dialogueFormat = json.dialogue_format || 'unknown';
+            plotArc = json.plot_arc || null;
+            textSegments = json.segments || [];
+            entities = json.entities || [];
+            scenes = json.scenes || [];
+            referenceStability = json.reference_stability || null;
+            documentStructure = json.document_structure || [];
+            inferWorkMetadata(text);
+            enrichPunctuationOps();
+            mapTokenPositions();
+            buildClips();
+            applyServerSegments();
+            selectedClip = clips.length - 1;
+            render();
+        }
+    }
+
     async function analyze(text) {
+        activeAnalysisController?.abort();
+        activeAnalysisController = new AbortController();
+        const controller = activeAnalysisController;
         document.body.classList.add('loading');
         originalText = text;
-        localStorage.setItem('logos_spectrum_text', text);
+        try { localStorage.setItem('logos_spectrum_text', text); } catch (_) {}
+        try {
+            const cached = await readCachedAnalysis(analysisCacheKey(text));
+            if (cached && cached.data) {
+                applyAnalysis(text, cached);
+                return;
+            }
+        } catch (error) {
+            console.warn('Analysis cache unavailable; requesting analysis.', error);
+        }
         try {
             const res = await fetch('/api/entropy_map', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ text })
+                body: JSON.stringify({ text }),
+                signal: controller.signal,
             });
+            if (!res.ok) throw new Error(`Analysis failed (${res.status})`);
             const json = await res.json();
+            if (controller.signal.aborted) return;
             if (json.data) {
-                data = json.data;
-                stylometry = json.stylometry || null;
-                rhythm = json.rhythm || [];
-                genre = json.genre || 'prose';
-                dialogueFormat = json.dialogue_format || 'unknown';
-                plotArc = json.plot_arc || null;
-                textSegments = json.segments || [];
-                enrichPunctuationOps();
-                mapTokenPositions();
-                buildClips();
-                applyServerSegments();
-                selectedClip = clips.length - 1;
-                render();
+                try { await writeCachedAnalysis(analysisCacheKey(text), json); }
+                catch (error) { console.warn('Analysis result was not cached.', error); }
+                applyAnalysis(text, json);
             }
         } catch (e) { console.error(e); }
-        document.body.classList.remove('loading');
+        finally { document.body.classList.remove('loading'); }
     }
 
 
+    function inferWorkMetadata(text) {
+        const lines = text.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+        const headingIndex = lines.findIndex(line =>
+            /^(?:глава|часть|chapter|part|пролог|эпилог)\b/i.test(line) ||
+            /^(?:[IVXLCDM]+|\d+[.)]?)$/i.test(line)
+        );
+        const titleBlock = lines.slice(0, headingIndex >= 0 ? headingIndex : Math.min(lines.length, 4));
+        const namePattern = /^[\p{Lu}][\p{Ll}'’-]+(?:\s+[\p{Lu}][\p{Ll}'’-]+){1,3}$/u;
+        const authorIndex = titleBlock.findIndex(line => namePattern.test(line));
+        const titleCandidates = titleBlock.filter((line, index) =>
+            index !== authorIndex && line.length <= 120 && !namePattern.test(line)
+        );
+        workAuthor = authorIndex >= 0 ? titleBlock[authorIndex] : 'Автор не указан';
+        workTitle = titleCandidates[0] || (authorIndex > 0 ? titleBlock[0] : 'Без названия');
+    }
+
+    function semanticDocumentMarkup(value) {
+        return value.replace(/^&gt;\s+([^\n]+)$/gm, '<blockquote class="semantic-blockquote">$1</blockquote>');
+    }
+
+    function semanticInline(text) {
+        let value = escHtml(text);
+        value = value.replace(/`([^`]+)`/g, '<code class="semantic-code">$1</code>');
+        value = value.replace(/\^([^\^]+)\^/g, '<sup>$1</sup>');
+        value = value.replace(/~([^~]+)~/g, '<sub>$1</sub>');
+        value = value.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+        value = value.replace(/_([^_]+)_/g, '<em>$1</em>');
+        value = value.replace(/==([^=]+)==/g, '<mark class="semantic-mark">$1</mark>');
+        return value;
+    }
+
+    function renderLibrary() {
+        const el = document.getElementById('librarySidebar');
+        if (!el) return;
+        const words = data.filter(t => /^[\p{L}\p{N}]/u.test(t.word)).length;
+        const chapters = documentStructure.filter(item => item.kind === 'chapter' && item.status === 'confirmed');
+        const candidates = documentStructure.filter(item => item.kind === 'chapter' && item.status === 'unknown');
+
+        // Dynamic active chapter detection based on selectedClip playhead
+        let activeChapterIndex = -1;
+        if (selectedClip !== null) {
+            const activeClip = clips.find(c => c.index === selectedClip);
+            if (activeClip && activeClip.tokens && activeClip.tokens.length) {
+                const firstTok = activeClip.tokens[0];
+                if (firstTok && Number.isFinite(firstTok._charStart)) {
+                    activeChapterIndex = chapters.findIndex(ch => firstTok._charStart >= ch.char_range[0] && firstTok._charStart < ch.char_range[1]);
+                    if (activeChapterIndex === -1 && chapters.length) {
+                        const lastCh = chapters[chapters.length - 1];
+                        if (firstTok._charStart >= lastCh.char_range[0]) {
+                            activeChapterIndex = chapters.length - 1;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Calculate sizes
+        const chCounts = chapters.map(ch => data.filter(t => Number.isFinite(t._charStart) && t._charStart >= ch.char_range[0] && t._charStart < ch.char_range[1]).length);
+        const maxChCount = Math.max(...chCounts, 1);
+
+        const candCounts = candidates.map(ch => data.filter(t => Number.isFinite(t._charStart) && t._charStart >= ch.char_range[0] && t._charStart < ch.char_range[1]).length);
+        const maxCandCount = Math.max(...candCounts, 1);
+
+        const chHtml = chapters.length ? chapters.map((chapter, index) => {
+            const count = chCounts[index];
+            const pct = (count / maxChCount) * 100;
+            const activeClass = index === activeChapterIndex ? ' active' : '';
+            return `<button class="chapter-item confirmed${activeClass}" onclick="jumpToPosition(${chapter.char_range[0]})">
+                <span class="chapter-dot"></span>
+                <span style="flex-shrink:0;width:36px;font-weight:500;">${escHtml(chapter.title || `Гл. ${index + 1}`)}</span>
+                <span class="chapter-bar-container">
+                    <span class="chapter-bar" style="display:block;width:${pct}%"></span>
+                </span>
+                <span class="chapter-count">${count}</span>
+            </button>`;
+        }).join('') : '<div class="chapter-empty">Подтверждённые главы не найдены.</div>';
+
+        const candHtml = candidates.length ? candidates.map((chapter, index) => {
+            const count = candCounts[index];
+            const pct = (count / maxCandCount) * 100;
+            return `<button class="chapter-item unknown" onclick="jumpToPosition(${chapter.char_range[0]})">
+                <span class="chapter-dot"></span>
+                <span style="flex-shrink:0;width:36px;font-weight:500;">${escHtml(chapter.title)}</span>
+                <span class="chapter-bar-container">
+                    <span class="chapter-bar" style="display:block;width:${pct}%"></span>
+                </span>
+                <span class="chapter-count">${count}</span>
+            </button>`;
+        }).join('') : '';
+
+        el.innerHTML = `
+            <div class="library-kicker">Произведение</div>
+            <h1 class="library-title" style="font-family:var(--font-serif);font-size:15px;font-weight:500;margin-bottom:2px;">${escHtml(workTitle || 'Без названия')}</h1>
+            <div class="library-author" style="font-family:var(--font-serif);font-size:13px;margin-bottom:12px;">${escHtml(workAuthor || 'Автор не указан')}</div>
+            <div style="display:flex;align-items:center;gap:6px;font-size:10px;color:var(--text-muted);margin-bottom:18px;">
+                <span style="background:var(--surface);border:1px solid var(--border-subtle);border-radius:3px;padding:2px 6px;">${data.length.toLocaleString('ru-RU')} токенов</span>
+                <span style="background:var(--surface);border:1px solid var(--border-subtle);border-radius:3px;padding:2px 6px;">${words.toLocaleString('ru-RU')} слов</span>
+            </div>
+            <div class="library-kicker">Главы</div>
+            <div class="chapter-list">${chHtml}</div>
+            ${candidates.length ? `<div class="library-kicker" style="margin-top:18px">Кандидаты</div><div class="chapter-list">${candHtml}</div>` : ''}
+        `;
+    }
+
+    function jumpToPosition(charPosition) {
+        if (largeDocument) {
+            const anchor = document.getElementById(`chapter-${charPosition}`);
+            if (anchor) anchor.scrollIntoView({behavior: 'smooth', block: 'start'});
+            return;
+        }
+        const foundIndex = data.findIndex(token => Number.isFinite(token._charStart) && token._charStart >= charPosition);
+        const index = Math.max(0, foundIndex >= 0 ? foundIndex : data.length - 1);
+        const clip = clips.find(item => item.tokens.some(token => token._globalIndex >= index));
+        if (clip) { selectedClip = clip.index; render(); }
+    }
+
     function render() {
+        renderLibrary();
         renderTextPane();
         renderInspector();
         renderTimeline();
@@ -1062,6 +1548,57 @@
         // Apply genre class to pane
         pane.classList.remove('genre-prose', 'genre-verse_drama', 'genre-poetry');
         pane.classList.add('genre-' + genre);
+        HL_MODES.forEach(mode => pane.classList.remove('hl-' + mode));
+        if (hlMode !== 'all') pane.classList.add('hl-' + hlMode);
+        if (largeDocument) {
+            const chapterByStart = new Map(documentStructure
+                .filter(item => item.kind === 'chapter' && item.status === 'confirmed')
+                .map(item => [item.char_range[0], item.title]));
+            const parts = [];
+            const chapterStarts = new Map([...chapterByStart.entries()].sort((a, b) => a[0] - b[0]));
+            const tokenClipMap = new Map();
+            clips.forEach(clip => clip.tokens.forEach(token => tokenClipMap.set(token._i, clip.index)));
+            const tokenHtml = (token, tokenIndex) => {
+                const word = escHtml(token.word);
+                if (!token.word || !/^[\p{L}\p{N}]/u.test(token.word)) return word;
+                const classes = [];
+                if (token.line_type === 'SPEAKER') classes.push('speaker-name');
+                if (token.line_type === 'STAGE_DIRECTION') classes.push('stage-direction');
+                if (token.line_type === 'HEADER' || token.line_type === 'CHARACTERS_LINE') classes.push('act-header');
+                if (token.speaker || token.turn_id !== undefined) classes.push('tok-turn');
+                if (token.is_entity && token.confidence >= 0.6) classes.push('tok-actor');
+                if (token.is_operator) classes.push('tok-operator');
+                if ((token.h || 0) >= 5) classes.push('tok-entropy-high');
+                else if ((token.h || 0) >= 3) classes.push('tok-entropy-mid');
+                const clipIndex = tokenClipMap.get(tokenIndex);
+                if (clipIndex !== undefined && selectedClip === clipIndex) classes.push('clip-selected-token');
+                const tokenAttrs = Number.isInteger(tokenIndex) ? ` data-token-index="${tokenIndex}"${clipIndex !== undefined ? ` data-clip="${clipIndex}"` : ''}` : '';
+                return classes.length || tokenAttrs ? `<span class="${classes.join(' ')}"${tokenAttrs}>${word}</span>` : word;
+            };
+            let paragraph = '';
+            let chapterSkipEnd = -1;
+            const flushParagraph = () => {
+                if (paragraph.trim()) parts.push(`<p>${paragraph}</p>`);
+                paragraph = '';
+            };
+            data.forEach((token, index) => {
+                const charStart = token._charStart || 0;
+                const title = chapterStarts.get(charStart);
+                if (title) {
+                    flushParagraph();
+                    parts.push(`<hr class="chapter-rule" aria-hidden="true"><h2 class="chapter-anchor" id="chapter-${charStart}">${escHtml(title)}</h2>`);
+                    const lineEnd = originalText.indexOf('\n', charStart);
+                    chapterSkipEnd = lineEnd >= 0 ? lineEnd + 1 : originalText.length;
+                }
+                if (chapterSkipEnd >= 0 && charStart < chapterSkipEnd) return;
+                const gap = token._gap || '';
+                if (/\n\s*\n/.test(gap)) flushParagraph();
+                paragraph += escHtml(gap).replace(/\n/g, ' ') + tokenHtml(token, index);
+            });
+            flushParagraph();
+            pane.innerHTML = `<article class="text-content large-document-text">${parts.join('')}</article>`;
+            return;
+        }
         const nodes = [];
         let inStageDir = false;
         let inHeader = false;
@@ -1250,6 +1787,21 @@
         const el = document.getElementById('inspector');
         el.className = inspectorVisible ? 'inspector' : 'inspector hidden';
         if (!inspectorVisible) return;
+
+        const makeMetricBar = (label, value, pct, colorValue) => {
+            return `
+                <div style="margin: 10px 0;">
+                    <div style="display:flex;align-items:baseline;justify-content:space-between;font-family:var(--font-mono);font-size:10px;text-transform:uppercase;letter-spacing:0.8px;color:var(--text-dim);">
+                        <span>${label}</span>
+                        <span class="insp-value" style="color:${colorValue || 'var(--text)'};font-size:12px;font-weight:500;">${value}</span>
+                    </div>
+                    <div style="margin-top:5px;height:4px;overflow:hidden;border-radius:2px;background:var(--border-subtle);">
+                        <div style="height:100%;border-radius:2px;transition:width 0.3s;background:${colorValue || 'var(--primary)'};width:${Math.max(0, Math.min(100, pct))}%"></div>
+                    </div>
+                </div>
+            `;
+        };
+
         const clip = selectedClip !== null ? clips[selectedClip] : null;
         if (clip) {
             let opsHtml = '';
@@ -1265,62 +1817,137 @@
                 actorsHtml = `<div class="insp-section-title">Актёры в клипе</div><div>` +
                     clip.actors.map(a => `<span class="insp-actor-badge">${escHtml(a)}</span>`).join('') + `</div>`;
             }
+
+            const maxWords = Math.max(...clips.map(c => c.wordCount), 1);
+            const wordPct = (clip.wordCount / maxWords) * 100;
+            const entropyPct = (clip.avgEntropy / 10) * 100;
+            const maxEntropyPct = (clip.maxEntropy / 10) * 100;
+            const sentimentPct = ((clip.sentiment + 1) / 2) * 100;
+            const valencePct = (clip.avgValence / 10) * 100;
+            const arousalPct = (clip.avgArousal / 10) * 100;
+            const concPct = (clip.avgConcreteness / 10) * 100;
+
+            const valenceColorVal = clip.avgValence > 6 ? 'var(--signal-low)' : clip.avgValence < 4 ? 'var(--signal-high)' : 'var(--text-muted)';
+            const sentimentColorVal = clip.sentiment > 0 ? 'var(--signal-low)' : clip.sentiment < 0 ? 'var(--signal-high)' : 'var(--text-muted)';
+
             el.innerHTML = `
-                <div class="inspector-title">Инспектор · Клип ${String(clip.index+1).padStart(2,'0')}</div>
-                <div class="inspector-clip-text">${escHtml(clip.text.trim())}</div>
-                <div class="insp-row"><span class="insp-label">Слов</span><span class="insp-value">${clip.wordCount}</span></div>
-                <div class="insp-row"><span class="insp-label">Энтропия ср.</span><span class="insp-value" style="color:${entropyColor(clip.avgEntropy)}">${clip.avgEntropy.toFixed(1)}</span></div>
-                <div class="insp-row"><span class="insp-label">Энтропия пик</span><span class="insp-value" style="color:${entropyColor(clip.maxEntropy)}">${clip.maxEntropy.toFixed(1)}</span></div>
-                <div class="insp-row"><span class="insp-label">Сентимент</span><span class="insp-value" style="color:${clip.sentiment>0?'var(--signal-low)':clip.sentiment<0?'var(--signal-high)':'inherit'}">${clip.sentiment>0?'+':''}${clip.sentiment.toFixed(1)}</span></div>
+                <div class="inspector-title" style="margin-bottom: 12px;">Инспектор · Клип ${String(clip.index+1).padStart(2,'0')}</div>
+                <div class="inspector-clip-text" style="font-family:var(--font-serif);font-size:13px;line-height:1.5;background:oklch(0.22 0.006 260 / 30%);border:1px solid var(--border-subtle);">${escHtml(clip.text.trim())}</div>
+                ${makeMetricBar('Слов', clip.wordCount, wordPct, 'var(--text-muted)')}
+                ${makeMetricBar('Энтропия ср.', clip.avgEntropy.toFixed(1), entropyPct, entropyColor(clip.avgEntropy))}
+                ${makeMetricBar('Энтропия пик', clip.maxEntropy.toFixed(1), maxEntropyPct, entropyColor(clip.maxEntropy))}
+                ${makeMetricBar('Сентимент', (clip.sentiment > 0 ? '+' : '') + clip.sentiment.toFixed(1), sentimentPct, sentimentColorVal)}
                 ${clip.avgValence ? `
-                <div class="insp-row"><span class="insp-label">Valence</span><span class="insp-value" style="color:${clip.avgValence>6?'var(--signal-low)':clip.avgValence<4?'var(--signal-high)':'var(--text-muted)'}">${clip.avgValence.toFixed(1)}</span></div>
-                <div class="insp-row"><span class="insp-label">Arousal</span><span class="insp-value" style="color:${arousalColor(clip.avgArousal)}">${clip.avgArousal.toFixed(1)}</span></div>
-                <div class="insp-row"><span class="insp-label">Concreteness</span><span class="insp-value" style="color:${concColor(clip.avgConcreteness)}">${clip.avgConcreteness.toFixed(1)}</span></div>
+                ${makeMetricBar('Valence', clip.avgValence.toFixed(1), valencePct, valenceColorVal)}
+                ${makeMetricBar('Arousal', clip.avgArousal.toFixed(1), arousalPct, arousalColor(clip.avgArousal))}
+                ${makeMetricBar('Concreteness', clip.avgConcreteness.toFixed(1), concPct, concColor(clip.avgConcreteness))}
                 ` : ''}
-                <div class="insp-row"><span class="insp-label">Диалог</span><span class="insp-value">${clip.isDialogue?'Да':'Нет'}</span></div>
+                <div class="insp-row" style="margin-top: 14px;"><span class="insp-label">Диалог</span><span class="insp-value">${clip.isDialogue?'Да':'Нет'}</span></div>
                 ${opsHtml}${actorsHtml}`;
         } else {
             const totalWords = data.filter(t => t.word[0] && t.word[0].match(/[а-яА-Яa-zA-Z0-9]/)).length;
             const avgE = clips.length ? clips.reduce((s,c)=>s+c.avgEntropy,0)/clips.length : 0;
             const opCount = clips.reduce((s,c)=>s+c.operators.length, 0);
+
+            // Character activity or cast
             let popHtml = '';
-            if (actorList.length) {
+            if (entities.length) {
+                const maxScore = Math.max(...entities.map(e => e.acting_score), 1);
+                popHtml = `<div class="insp-section-title">Активность персонажей</div>` +
+                    entities.slice(0,6).map(e => {
+                        const pct = (e.acting_score / maxScore) * 100;
+                        return `
+                            <div style="margin: 8px 0;">
+                                <div style="display:flex;align-items:baseline;justify-content:space-between;font-family:var(--font-mono);font-size:10px;text-transform:uppercase;letter-spacing:0.8px;color:var(--text-dim);">
+                                    <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:140px;">${escHtml(e.canonical_name)}</span>
+                                    <span style="color:var(--text-muted);font-size:11px;">${e.acting_score}</span>
+                                </div>
+                                <div style="margin-top:4px;height:4px;overflow:hidden;border-radius:2px;background:var(--border-subtle);">
+                                    <div style="height:100%;border-radius:2px;background:var(--primary);width:${pct}%"></div>
+                                </div>
+                            </div>
+                        `;
+                    }).join('') + `<div style="font-size:10px;color:var(--text-dim);margin-top:6px;line-height:1.3;">Рейтинг наблюдаемых ролей, не вывод о главном герое.</div>`;
+            } else if (actorList.length) {
                 const maxC = actorList[0].count;
                 popHtml = `<div class="insp-section-title">Плотность населённости</div>` +
-                    actorList.slice(0,6).map(a =>
-                        `<div style="display:flex;align-items:center;gap:8px;font-size:12px;margin-bottom:6px;">
-                            <span style="width:70px;font-family:var(--font-mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escHtml(a.name)}</span>
-                            <div class="insp-bar-track"><div class="insp-bar-fill" style="width:${(a.count/maxC)*100}%"></div></div>
-                            <span style="font-family:var(--font-mono);color:var(--text-muted)">${a.count}</span>
-                        </div>`
-                    ).join('');
+                    actorList.slice(0,6).map(a => {
+                        const pct = (a.count / maxC) * 100;
+                        return `
+                            <div style="margin: 8px 0;">
+                                <div style="display:flex;align-items:baseline;justify-content:space-between;font-family:var(--font-mono);font-size:10px;text-transform:uppercase;letter-spacing:0.8px;color:var(--text-dim);">
+                                    <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:140px;">${escHtml(a.name)}</span>
+                                    <span style="color:var(--text-muted);font-size:11px;">${a.count}</span>
+                                </div>
+                                <div style="margin-top:4px;height:4px;overflow:hidden;border-radius:2px;background:var(--border-subtle);">
+                                    <div style="height:100%;border-radius:2px;background:var(--primary);width:${pct}%"></div>
+                                </div>
+                            </div>
+                        `;
+                    }).join('');
             }
+
+            const referenceHtml = referenceStability ? (() => {
+                const r = referenceStability;
+                const pct = Math.round(r.stability * 100);
+                const color = pct >= 85 ? 'var(--signal-low)' : pct >= 60 ? 'var(--signal-amber)' : 'var(--signal-high)';
+                const unresolved = r.unresolved.slice(0, 5).map(item =>
+                    `<span class="diag-badge diag-warning" title="${escHtml(item.reason)}">${escHtml(item.pronoun)} · неясная ссылка</span>`
+                ).join('');
+                return `
+                    <div class="insp-section-title">Стабильность референций</div>
+                    ${makeMetricBar('Разрешено', `${r.resolved_count}/${r.total_pronouns}`, pct, color)}
+                    ${unresolved ? `<div style="margin-top:5px;display:flex;flex-wrap:wrap;gap:4px;">${unresolved}</div>` : ''}
+                    <div style="font-size:10px;color:var(--text-dim);margin-top:6px;line-height:1.3;">Показывает только местоимения с подтверждённым референтом; не угадывает ближайшее слово.</div>
+                `;
+            })() : '';
+
+            const sceneHtml = scenes.length ? (() => {
+                const statusLabel = { confirmed: 'подтверждён', unknown: 'не подтверждён', rejected: 'исключён' };
+                const statusColor = { confirmed: 'var(--signal-low)', unknown: 'var(--signal-amber)', rejected: 'var(--signal-high)' };
+                return `<div class="insp-section-title">Сцены и участники</div>` +
+                    scenes.map((scene, index) => {
+                        const people = scene.participants || [];
+                        const entries = people.length ? people.map(person =>
+                            `<div style="display:flex;align-items:baseline;gap:6px;font-size:11px;margin:3px 0;">
+                                <span style="font-family:var(--font-mono);min-width:70px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escHtml(person.name)}</span>
+                                <span style="color:${statusColor[person.scene_status] || 'var(--text-muted)'}">${statusLabel[person.scene_status] || person.scene_status}</span>
+                                <span style="color:var(--text-dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${person.roles.map(escHtml).join(', ')}</span>
+                            </div>`
+                        ).join('') : `<div style="font-size:11px;color:var(--text-dim)">Нет распознанных участников</div>`;
+                        return `<div style="padding:6px 0;border-bottom:1px solid var(--border-subtle)">
+                            <div class="insp-label">Сцена ${String(index + 1).padStart(2, '0')} · токены ${scene.token_range[0] + 1}–${scene.token_range[1] + 1}</div>${entries}
+                        </div>`;
+                    }).join('');
+            })() : '';
+
+            // Data/Control plane metrics
+            const wordTokens = data.filter(t => t.word[0] && t.word[0].match(/[а-яА-Яa-zA-Z0-9]/));
+            const total = wordTokens.length || 1;
+            const controlCount = wordTokens.filter(t => t.is_operator).length;
+            const dataCount = total - controlCount;
+            const dataPct = Math.round(dataCount / total * 100);
+            const ctrlPct = 100 - dataPct;
+            const gateRatio = dataPct > 0 ? (total / dataCount).toFixed(1) : '∞';
+
+            const gateRatioHtml = `
+                <div class="insp-section-title">Data / Control Plane</div>
+                ${makeMetricBar('Data plane', `${dataPct}%`, dataPct, 'var(--signal-amber)')}
+                ${makeMetricBar('Control plane', `${ctrlPct}%`, ctrlPct, 'var(--primary)')}
+                <div class="insp-row" style="margin-top:10px;"><span class="insp-label">Gate savings</span><span class="insp-value">~${gateRatio}×</span></div>
+            `;
+
             el.innerHTML = `
-                <div class="inspector-title">Инспектор · Весь текст</div>
-                <div class="insp-row"><span class="insp-label">Клипов</span><span class="insp-value">${clips.length}</span></div>
-                <div class="insp-row"><span class="insp-label">Слов</span><span class="insp-value">${totalWords}</span></div>
-                <div class="insp-row"><span class="insp-label">Энтропия ср.</span><span class="insp-value" style="color:${entropyColor(avgE)}">${avgE.toFixed(1)}</span></div>
-                <div class="insp-row"><span class="insp-label">Операторов</span><span class="insp-value">${opCount}</span></div>
-                <div class="insp-row"><span class="insp-label">Актёров</span><span class="insp-value">${actorList.length}</span></div>
-                <div class="insp-row"><span class="insp-label">Диалоги</span><span class="insp-value">${clips.some(c=>c.isDialogue)?'Да':'Нет'}</span></div>
+                <div class="inspector-title" style="margin-bottom: 12px;">Инспектор · Весь текст</div>
+                ${makeMetricBar('Клипов', clips.length, (clips.length / 500) * 100, 'var(--text-muted)')}
+                ${makeMetricBar('Слов', totalWords, (totalWords / 20000) * 100, 'var(--text-muted)')}
+                ${makeMetricBar('Энтропия ср.', avgE.toFixed(1), (avgE / 10) * 100, entropyColor(avgE))}
+                ${makeMetricBar('Операторов', opCount, (opCount / 1000) * 100, 'var(--primary)')}
+                ${makeMetricBar('Актёров', actorList.length, (actorList.length / 50) * 100, 'var(--text-muted)')}
+                <div class="insp-row" style="margin-top:14px;"><span class="insp-label">Диалоги</span><span class="insp-value">${clips.some(c=>c.isDialogue)?'Да':'Нет'}</span></div>
                 <div class="insp-row"><span class="insp-label">Жанр</span><span class="genre-badge">${genre === 'verse_drama' ? 'Драма в стихах' : genre === 'poetry' ? 'Поэзия' : 'Проза'}</span></div>
-                <div class="insp-row"><span class="insp-label">Формат</span><span class="genre-badge">${dialogueFormat === 'drama' ? 'Пьеса' : dialogueFormat === 'prose_em' ? 'Проза (тире)' : dialogueFormat === 'prose_q' ? 'Проза (кавычки)' : dialogueFormat === 'mixed' ? 'Смешанный' : '—'}</span></div>
-                ${(() => {
-                    // Data/Control plane metrics
-                    const wordTokens = data.filter(t => t.word[0] && t.word[0].match(/[а-яА-Яa-zA-Z0-9]/));
-                    const total = wordTokens.length || 1;
-                    const controlCount = wordTokens.filter(t => t.is_operator).length;
-                    const dataCount = total - controlCount;
-                    const dataPct = Math.round(dataCount / total * 100);
-                    const ctrlPct = 100 - dataPct;
-                    const gateRatio = dataPct > 0 ? (total / dataCount).toFixed(1) : '∞';
-                    return `
-                        <div class="insp-section-title">Data / Control Plane</div>
-                        <div class="insp-row"><span class="insp-label">Data plane</span><span class="insp-value" style="color:var(--signal-amber)">${dataPct}%</span></div>
-                        <div class="insp-row"><span class="insp-label">Control plane</span><span class="insp-value" style="color:var(--primary)">${ctrlPct}%</span></div>
-                        <div class="insp-row"><span class="insp-label">Gate savings</span><span class="insp-value">~${gateRatio}×</span></div>
-                    `;
-                })()}
+                <div class="insp-row" style="border-bottom:1px solid var(--border-subtle);"><span class="insp-label">Формат</span><span class="genre-badge">${dialogueFormat === 'drama' ? 'Пьеса' : dialogueFormat === 'prose_em' ? 'Проза (тире)' : dialogueFormat === 'prose_q' ? 'Проза (кавычки)' : dialogueFormat === 'mixed' ? 'Смешанный' : '—'}</span></div>
+                ${gateRatioHtml}
                 ${stylometry ? (() => {
                     const s = stylometry;
                     return `
@@ -1362,6 +1989,8 @@
                     `;
                 })() : ''}
                 ${popHtml}
+                ${referenceHtml}
+                ${sceneHtml}
                 <div class="insp-hint">Выберите клип на таймлайне или предложение в тексте, чтобы увидеть его спектр. Зелёное — «дешёвые» когнатные корни, красное — редкие информационные пики.</div>`;
         }
     }
@@ -1369,6 +1998,13 @@
     // ── Timeline ──
     function renderTimeline() {
         const footer = document.getElementById('timelineFooter');
+        const timelineButton = document.getElementById('btnTimeline');
+        if (timelineButton) {
+            timelineButton.classList.toggle('active', timelineVisible);
+            timelineButton.textContent = timelineVisible ? 'Скрыть шкалу' : 'Показать шкалу';
+        }
+        footer.classList.toggle('timeline-hidden', !timelineVisible);
+        if (!timelineVisible) { footer.innerHTML = ''; return; }
         if (!clips.length) { footer.innerHTML = ''; return; }
 
         const topActors = actorList.slice(0, 4);
@@ -1396,7 +2032,7 @@
         if (hasConcreteness) tracks.push({ id:'concreteness', label:'Concr.', dot:'oklch(0.65 0.18 300)', h:36 });
         // Rhythm
         if (rhythm.length > 1) tracks.push({ id:'rhythm', label:'Rhythm', dot:'oklch(0.75 0.14 60)', h:36 });
-        // Actor tracks
+        // Role tracks: one row per detected actor/speaker.
         topActors.forEach((a, ai) => {
             tracks.push({ id:'actor', actorName: a.name, label: a.name, dot: ACTOR_HEX[ai], h:28 });
         });
@@ -1407,22 +2043,30 @@
             tracks.push({ id:'arc', label:'Арка', dot:'oklch(0.64 0.22 25)', h:28 });
         }
 
-        let html = '<div class="timeline-inner">';
+        let html = `<div class="timeline-toolbar" aria-label="Управление шкалой">
+            <button class="timeline-tool" title="Очистить выбор" aria-label="Очистить выбор" onclick="clearTimelineSelection()">×</button>
+            <button class="timeline-tool" title="Скрыть шкалу" aria-label="Скрыть шкалу" onclick="toggleTimeline()">−</button>
+        </div><div class="timeline-inner">`;
         tracks.forEach(tr => {
-            // Determine if this track is focused/dimmed
+            // A clicked track takes precedence; otherwise mirror the top highlight mode.
             let rowCls = 't-row';
             if (tr.id === 'ruler') rowCls += ' t-row-ruler';
-            if (focusedTrack) {
-                const isMatch = (focusedTrack.id === tr.id && (!focusedTrack.actorName || focusedTrack.actorName === tr.actorName));
-                rowCls += isMatch ? ' t-focused' : ' t-dimmed';
-            }
+            const explicitMatch = focusedTrack && focusedTrack.id === tr.id &&
+                (!focusedTrack.actorName || focusedTrack.actorName === tr.actorName);
+            const modeMatch = !focusedTrack && (
+                (hlMode === 'roles' && tr.id === 'actor') ||
+                (hlMode === 'entropy' && tr.id === 'entropy') ||
+                (hlMode === 'structure' && (tr.id === 'ruler' || tr.id === 'dialogue'))
+            );
+            const timelineFiltered = focusedTrack || ['roles', 'entropy', 'structure'].includes(hlMode);
+            if (timelineFiltered) rowCls += (explicitMatch || modeMatch) ? ' t-focused' : ' t-dimmed';
             // Track key for onclick
             const trackKey = tr.id === 'actor'
                 ? `{id:'actor',actorName:'${tr.actorName.replace(/'/g, "\\'")}'}`
                 : `{id:'${tr.id}'}`;
 
             html += `<div class="${rowCls}">`;
-            html += `<div class="t-label ${focusedTrack && focusedTrack.id === tr.id && (!focusedTrack.actorName || focusedTrack.actorName === tr.actorName) ? 'focused' : ''}" style="height:${tr.h}px" onclick="event.stopPropagation();toggleTrackFocus(${trackKey})">`;
+            html += `<div class="t-label ${explicitMatch || modeMatch ? 'focused' : ''}" style="height:${tr.h}px" onclick="event.stopPropagation();toggleTrackFocus(${trackKey})">`;
             if (tr.dot) html += `<span class="t-dot" style="background:${tr.dot}"></span>`;
             html += `<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escHtml(tr.label)}</span></div>`;
             html += `<div class="t-cells">`;
@@ -1508,7 +2152,10 @@
                         break;
                     }
                     case 'actor': {
-                        if (clip.actors.includes(tr.actorName)) {
+                        if (clip.actors.includes(tr.actorName) || clip.tokens.some(token =>
+                            (token.speaker === tr.actorName || token.clean === tr.actorName) &&
+                            token.line_type !== 'HEADER' && token.line_type !== 'CHARACTERS_LINE' &&
+                            token.line_type !== 'SPEAKER' && token.line_type !== 'STAGE_DIRECTION')) {
                             html += `<div class="actor-block" style="background:${tr.dot}"></div>`;
                         }
                         break;
@@ -1587,10 +2234,24 @@
             }
         });
 
-        // Scroll selected into view
+        // Keep the selected timeline cell visible in the horizontal scale.
         if (selectedClip !== null) {
             const el = footer.querySelector(`[data-tclip="${selectedClip}"]`);
             if (el) el.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
+        }
+
+        // Selecting a point on the scale also moves the reading pane to its text.
+        if (selectedClip !== null) {
+            const textEl = document.querySelector(`.clip-span[data-clip="${selectedClip}"], .large-document-text [data-clip="${selectedClip}"]`);
+            if (textEl) {
+                const pane = document.getElementById('textPane');
+                const paneBox = pane.getBoundingClientRect();
+                const textBox = textEl.getBoundingClientRect();
+                pane.scrollBy({
+                    top: textBox.top - paneBox.top - (pane.clientHeight - textBox.height) / 2,
+                    behavior: 'smooth'
+                });
+            }
         }
     }
 
@@ -1609,6 +2270,49 @@
         }
         renderTimeline();
         renderTextPane();
+        renderInspector();
+        scrollToFocusedTrack();
+    }
+
+    function scrollToFocusedTrack() {
+        if (!focusedTrack) return;
+        let clipIndex = -1;
+        for (const clip of clips) {
+            const matches = focusedTrack.id === 'actor'
+                ? clip.actors.includes(focusedTrack.actorName)
+                : focusedTrack.id === 'dialogue'
+                    ? clip.isDialogue
+                    : focusedTrack.id === 'operators'
+                        ? clip.operators.length > 0
+                        : focusedTrack.id === 'entropy'
+                            ? clip.avgEntropy > 0
+                            : focusedTrack.id === 'sentiment'
+                                ? clip.sentiment !== 0 || clip.avgValence > 0
+                                : focusedTrack.id === 'arousal'
+                                    ? clip.avgArousal > 0
+                                    : focusedTrack.id === 'concreteness'
+                                        ? clip.avgConcreteness > 0
+                                        : true;
+            if (matches) { clipIndex = clip.index; break; }
+        }
+        if (clipIndex < 0) return;
+        selectedClip = clipIndex;
+        renderTextPane();
+        renderInspector();
+        requestAnimationFrame(() => {
+            const textEl = document.querySelector(`.clip-span[data-clip="${clipIndex}"], .large-document-text [data-clip="${clipIndex}"]`);
+            if (textEl) {
+                const pane = document.getElementById('textPane');
+                const paneBox = pane.getBoundingClientRect();
+                const textBox = textEl.getBoundingClientRect();
+                pane.scrollBy({
+                    top: textBox.top - paneBox.top - (pane.clientHeight - textBox.height) / 2,
+                    behavior: 'smooth'
+                });
+            }
+            const scaleEl = document.querySelector(`[data-tclip="${clipIndex}"]`);
+            if (scaleEl) scaleEl.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
+        });
     }
 
     function toggleEdit() {
@@ -1631,12 +2335,33 @@
         }
     }
 
+    function clearTimelineSelection() {
+        selectedClip = null;
+        focusedTrack = null;
+        hlMode = 'all';
+        document.getElementById('hlModeLabel').textContent = HL_LABELS.all;
+        document.querySelectorAll('.hl-picker-item').forEach(el => {
+            el.classList.toggle('active', el.dataset.mode === 'all');
+        });
+        render();
+    }
+
+    function toggleTimeline() {
+        timelineVisible = !timelineVisible;
+        renderTimeline();
+    }
+
     function toggleInspector() {
         inspectorVisible = !inspectorVisible;
         const btn = document.getElementById('btnInsp');
         btn.classList.toggle('dimmed', !inspectorVisible);
         renderInspector();
-        document.getElementById('inspector').className = inspectorVisible ? 'inspector' : 'inspector hidden';
+    }
+
+    function toggleTheme() {
+        lightTheme = !lightTheme;
+        document.body.classList.toggle('theme-light', lightTheme);
+        try { localStorage.setItem('logos_spectrum_theme', lightTheme ? 'light' : 'dark'); } catch (_) {}
     }
 
     let hlMode = 'all';
@@ -1660,9 +2385,18 @@
         document.querySelectorAll('.hl-picker-item').forEach(el => {
             el.classList.toggle('active', el.dataset.mode === mode);
         });
+        // Mirror the selected text layer in the lower timeline.
+        if (!focusedTrack) renderTimeline();
         // Close picker
         document.getElementById('hlPicker').classList.remove('open');
     }
+
+    // The gray workspace outside the white content page clears all active UI filters.
+    document.addEventListener('click', e => {
+        if (selectedClip === null && !focusedTrack && hlMode === 'all') return;
+        if (e.target.closest('.text-content, [data-tclip], .t-label, .timeline-tool, #btnHighlights, #hlPicker')) return;
+        clearTimelineSelection();
+    });
 
     // Close picker on outside click
     document.addEventListener('click', e => {
@@ -1677,6 +2411,30 @@
         return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
     }
 
+    function downloadBlob(contents, filename, type = 'text/plain;charset=utf-8') {
+        const blob = new Blob([contents], { type });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = filename;
+        link.click();
+        URL.revokeObjectURL(url);
+    }
+
+    function downloadText() {
+        if (!originalText) return;
+        downloadBlob(originalText, `text_${new Date().getTime()}.txt`);
+    }
+
+    function downloadRoles() {
+        const roles = actorList.map(({ name, count }) => ({
+            name,
+            mentions: count,
+            clips: clips.filter(clip => clip.actors.includes(name)).map(clip => clip.index + 1),
+        }));
+        downloadBlob(JSON.stringify({ roles }, null, 2), `roles_${new Date().getTime()}.json`, 'application/json;charset=utf-8');
+    }
+
     function downloadScript() {
         if (!clips.length) return;
         let out = `Logos Spectrum v5.2 — Narrative Script Export\n`;
@@ -1687,17 +2445,14 @@
             const h = ` [H: ${c.avgEntropy.toFixed(1)}]`;
             out += `${type}${h}${actors}\n${c.text.trim()}\n\n`;
         });
-        const blob = new Blob([out], { type: 'text/plain' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `script_export_${new Date().getTime()}.txt`;
-        a.click();
+        downloadBlob(out, `script_export_${new Date().getTime()}.txt`);
         toast('Script exported!');
     }
 
     // ── Init ──
     window.onload = () => {
+        lightTheme = localStorage.getItem('logos_spectrum_theme') === 'light';
+        document.body.classList.toggle('theme-light', lightTheme);
         const saved = localStorage.getItem('logos_spectrum_text');
         if (saved) {
             analyze(saved);
