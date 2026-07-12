@@ -495,7 +495,7 @@
         .tok-entropy-high {
             text-decoration: underline wavy;
             text-decoration-color: var(--signal-high);
-            text-decoration-thickness: 1px;
+            text-decoration-thickness: 1.5px;
             text-underline-offset: 4px;
             border-radius: 3px;
             transition: background 0.15s;
@@ -504,9 +504,9 @@
             background-color: color-mix(in srgb, var(--signal-high) 10%, transparent);
         }
         .tok-entropy-mid {
-            text-decoration: underline wavy;
+            text-decoration: underline auto;
             text-decoration-color: var(--signal-amber);
-            text-decoration-thickness: 1px;
+            text-decoration-thickness: 1.5px;
             text-underline-offset: 4px;
             border-radius: 3px;
             transition: background 0.15s;
@@ -514,11 +514,23 @@
         .tok-entropy-mid:hover {
             background-color: color-mix(in srgb, var(--signal-amber) 10%, transparent);
         }
+        .tok-entropy-low {
+            text-decoration: underline dotted;
+            text-decoration-color: color-mix(in srgb, var(--signal-amber) 60%, var(--primary));
+            text-decoration-thickness: 1.5px;
+            text-underline-offset: 4px;
+            border-radius: 3px;
+            transition: background 0.15s;
+        }
+        .tok-entropy-low:hover {
+            background-color: color-mix(in srgb, var(--primary) 8%, transparent);
+        }
 
         /* ── Highlight Modes ── */
         /* Reset helpers — hide specific highlight types */
         .hl-hide-entropy .tok-entropy-high,
-        .hl-hide-entropy .tok-entropy-mid { border-bottom: none; }
+        .hl-hide-entropy .tok-entropy-mid,
+        .hl-hide-entropy .tok-entropy-low { text-decoration: none !important; border-bottom: none !important; }
 
         .hl-hide-operators .tok-operator {
             color: var(--text) !important;
@@ -554,7 +566,8 @@
             font-weight: 600;
         }
         .hl-roles .tok-entropy-high,
-        .hl-roles .tok-entropy-mid { border-bottom: none; }
+        .hl-roles .tok-entropy-mid,
+        .hl-roles .tok-entropy-low { text-decoration: none !important; border-bottom: none !important; }
         .hl-roles .tok-operator { color: var(--text) !important; background: none !important; }
         .hl-roles .stage-direction,
         .hl-roles .act-header { color: var(--text) !important; background: none !important; }
@@ -568,7 +581,8 @@
 
         /* Mode: Structure — emphasize structural markers, mute semantic layers. */
         .hl-structure .tok-entropy-high,
-        .hl-structure .tok-entropy-mid { border-bottom: none; }
+        .hl-structure .tok-entropy-mid,
+        .hl-structure .tok-entropy-low { text-decoration: none !important; border-bottom: none !important; }
         .hl-structure .tok-operator,
         .hl-structure .tok-actor { color: var(--text) !important; background: none !important; font-weight: inherit; }
         .hl-structure .speaker-name,
@@ -591,7 +605,8 @@
 
         /* Mode: Clean — nothing */
         .hl-clean .tok-entropy-high,
-        .hl-clean .tok-entropy-mid { border-bottom: none; }
+        .hl-clean .tok-entropy-mid,
+        .hl-clean .tok-entropy-low { text-decoration: none !important; border-bottom: none !important; }
         .hl-clean .tok-operator { color: var(--text) !important; background: none !important; }
         .hl-clean .tok-actor { color: var(--text) !important; font-weight: inherit; }
         .hl-clean .tok-turn { background: none !important; }
@@ -1569,7 +1584,8 @@
                 if (token.is_entity && token.confidence >= 0.6) classes.push('tok-actor');
                 if (token.is_operator) classes.push('tok-operator');
                 if ((token.h || 0) >= 5) classes.push('tok-entropy-high');
-                else if ((token.h || 0) >= 3) classes.push('tok-entropy-mid');
+                else if ((token.h || 0) >= 3.5) classes.push('tok-entropy-mid');
+                else if ((token.h || 0) >= 2) classes.push('tok-entropy-low');
                 const clipIndex = tokenClipMap.get(tokenIndex);
                 if (clipIndex !== undefined && selectedClip === clipIndex) classes.push('clip-selected-token');
                 const tokenAttrs = Number.isInteger(tokenIndex) ? ` data-token-index="${tokenIndex}"${clipIndex !== undefined ? ` data-clip="${clipIndex}"` : ''}` : '';
@@ -1758,8 +1774,10 @@
                     wordHtml = '<span class="tok-actor" style="color:' + color + '" title="' + t.clean + '">' + escHtml(t.word) + '</span>';
                 } else if ((t.h || 0) >= 5) {
                     wordHtml = '<span class="tok-entropy-high" title="H=' + (t.h||0).toFixed(2) + '">' + escHtml(t.word) + '</span>';
-                } else if ((t.h || 0) >= 3) {
+                } else if ((t.h || 0) >= 3.5) {
                     wordHtml = '<span class="tok-entropy-mid" title="H=' + (t.h||0).toFixed(2) + '">' + escHtml(t.word) + '</span>';
+                } else if ((t.h || 0) >= 2) {
+                    wordHtml = '<span class="tok-entropy-low" title="H=' + (t.h||0).toFixed(2) + '">' + escHtml(t.word) + '</span>';
                 } else {
                     wordHtml = escHtml(t.word);
                 }
