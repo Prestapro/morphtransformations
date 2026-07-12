@@ -250,7 +250,7 @@
             background: var(--bg-secondary);
         }
         .text-pane.editing { padding: 32px; }
-        .text-pane.editing .edit-textarea {
+        .text-pane.editing .edit-area {
             display: block;
             width: 100%;
             height: auto;
@@ -260,7 +260,6 @@
             box-sizing: border-box;
             border: 1px solid var(--border-subtle) !important;
             outline: none;
-            resize: none;
             overflow: hidden;
             background: var(--surface) !important;
             color: var(--text);
@@ -740,22 +739,20 @@
             flex-shrink: 0;
         }
 
-        /* Editor textarea */
-        .edit-textarea {
-            width: 100%; height: 100%;
-            background: var(--bg);
-            color: var(--text);
-            border: none; outline: none;
-            padding: 24px 48px;
-            font-family: var(--font-sans);
-            font-size: 16px; line-height: 1.7;
-            letter-spacing: 0.01em;
+        /* Editor area */
+        .edit-area {
+            width: 100%;
+            outline: none;
             white-space: pre-wrap;
             word-wrap: break-word;
             overflow-wrap: break-word;
-            resize: none;
         }
-        .edit-textarea::placeholder { color: var(--text-dim); }
+        .edit-area:empty::before {
+            content: attr(placeholder);
+            color: var(--text-dim);
+            pointer-events: none;
+            display: block;
+        }
 
         /* ── Inspector ───────────────────────────────── */
         .inspector {
@@ -1630,13 +1627,14 @@
         if (editing) {
             pane.classList.add('editing');
             const saved = localStorage.getItem('logos_spectrum_text') || SAMPLE;
-            pane.innerHTML = `<textarea class="edit-textarea text-content" id="editArea" placeholder="Вставьте текст для анализа…">${escHtml(saved)}</textarea>`;
+            pane.innerHTML = `<div class="edit-area text-content" id="editArea" contenteditable="true" placeholder="Вставьте текст для анализа…">${formatRawTextForEditing(saved)}</div>`;
             
             const area = document.getElementById('editArea');
             if (area) {
-                adjustTextareaHeight(area);
-                area.addEventListener('input', () => {
-                    adjustTextareaHeight(area);
+                area.addEventListener('paste', (e) => {
+                    e.preventDefault();
+                    const text = (e.originalEvent || e).clipboardData.getData('text/plain');
+                    document.execCommand('insertText', false, text);
                 });
             }
 
@@ -2435,10 +2433,34 @@
         });
     }
 
-    function adjustTextareaHeight(textarea) {
-        if (!textarea) return;
-        textarea.style.height = 'auto';
-        textarea.style.height = textarea.scrollHeight + 'px';
+    function formatRawTextForEditing(text) {
+        if (!text) return '';
+        const lines = text.split('\n');
+        const parts = [];
+        let paragraphLines = [];
+        
+        const flushParagraph = () => {
+            if (paragraphLines.length) {
+                parts.push(`<p>${escHtml(paragraphLines.join('\n'))}</p>`);
+                paragraphLines = [];
+            }
+        };
+        
+        lines.forEach(line => {
+            const trimmed = line.trim();
+            const isChapter = /^[IVXLCDM\d]+$/i.test(trimmed) || /^(Глава|Chapter)\s+/i.test(trimmed);
+            
+            if (isChapter) {
+                flushParagraph();
+                parts.push(`<hr class="chapter-rule" aria-hidden="true"><h3 class="chapter-anchor">${escHtml(line)}</h3>`);
+            } else if (trimmed === '') {
+                flushParagraph();
+            } else {
+                paragraphLines.push(line);
+            }
+        });
+        flushParagraph();
+        return parts.join('');
     }
 
     function toggleEdit() {
@@ -2461,10 +2483,13 @@
             btn.textContent = 'Правка';
             btn.classList.remove('active');
             const area = document.getElementById('editArea');
-            if (area && area.value.trim()) {
-                analyze(area.value);
-            } else {
-                renderTextPane();
+            if (area) {
+                const text = area.innerText;
+                if (text.trim()) {
+                    analyze(text);
+                } else {
+                    renderTextPane();
+                }
             }
         }
     }
