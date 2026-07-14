@@ -177,8 +177,13 @@ def _is_drama_speaker_candidate(line: str,
     нет знаков препинания внутри (кроме точки в конце).
     Rejects scene headings and cast lists.
     """
-    s = line.strip().rstrip(".")
+    raw = line.strip()
+    s = raw.rstrip(".")
     if not s:
+        return False
+    # A period terminates a sentence. Without a known-speaker inventory it
+    # cannot safely be treated as a character label (for example, `Третья.`).
+    if raw.endswith('.') and (known_speakers is None or s not in known_speakers):
         return False
     # Reject scene headings
     if _is_scene_heading(line):

@@ -236,13 +236,152 @@ class TestEntityID:
             f"Expected {ENTITY_ID_EXPECTED['entity_ids']}, got {eids}"
 
 
+class TestEntityIdNormalization:
+    """entity_id preserves gender and does not truncate surnames."""
+
+    def test_rakolnikov_not_truncated(self):
+        d = _api("Раскольников\nЯ это сделал.")
+        eids = [t.get('entity_id','') for t in d['dialogue_turns']]
+        assert any('раскольников' in e for e in eids), f"got {eids}"
+
+    def test_astrov_not_truncated(self):
+        d = _api("Астров\nНичего, брат.")
+        eids = [t.get('entity_id','') for t in d['dialogue_turns']]
+        assert any('астров' in e for e in eids), f"got {eids}"
+
+    def test_sidorov_sidorova_different_eids(self):
+        """Сидоров (masc) and Сидорова (femn) must have different entity_ids."""
+        from engine.language.inflector import _cached_reverse_lookup
+        def eid(name):
+            sl = name.lower()
+            rows = _cached_reverse_lookup(sl)
+            if rows:
+                for _, _, gram, _ in rows:
+                    if ('femn' in gram or 'masc' in gram) and 'nomn' in gram and 'Surn' in gram:
+                        return sl.replace('ё', 'е')
+            return sl.replace('ё', 'е')
+        assert eid('Сидоров') != eid('Сидорова'), \
+            f"Сидоров and Сидорова must differ: {eid('Сидоров')!r} vs {eid('Сидорова')!r}"
+
+    def test_caps_and_title_same_eid(self):
+        """ФАМУСОВ and Фамусов must resolve to the same entity_id."""
+        d = _api("ФАМУСОВ\nЧто за оказия!\n\nМолчалин\nЯ-с.")
+        eids = {t.get('entity_id','') for t in d['dialogue_turns']}
+        # Both ФАМУСОВ and Фамусов lower to 'фамусов'
+        assert 'фамусов' in eids, f"got {eids}"
+
+    def test_oov_names_preserved(self):
+        """OOV invented names are kept as-is, not truncated."""
+        d = _api("Зорак\nТы не пройдёшь.\n\nЭлинда\nЯ должна.")
+        eids = [t.get('entity_id','') for t in d['dialogue_turns']]
+        assert 'зорак' in eids and 'элинда' in eids, f"got {eids}"
+
+
+class TestTextKnowledgeGraph:
+    """TKG invariants: no edge without evidence, no SAME_AS without strong evidence."""
+
+    def test_graph_present_in_response(self):
+        d = _api("Фамусов\nЯ здесь.")
+        assert 'knowledge_graph' in d
+        kg = d['knowledge_graph']
+        assert 'nodes' in kg and 'edges' in kg and 'stats' in kg
+
+    def test_speaker_edge_is_confirmed(self):
+        d = _api("Фамусов\nЯ здесь.")
+        kg = d['knowledge_graph']
+        speaker_edges = [e for e in kg['edges'] if e['edge_type'] == 'SPEAKER_OF']
+        assert speaker_edges, "Expected at least one SPEAKER_OF edge"
+        assert all(e['knowledge_status'] == 'confirmed' for e in speaker_edges)
+
+    def test_mention_only_is_not_present_in(self):
+        d = _api("Фамусов\nГде Чацкий?")
+        kg = d['knowledge_graph']
+        present_edges = [e for e in kg['edges'] if e['edge_type'] == 'PRESENT_IN']
+        chatsky_present = [e for e in present_edges
+                           if 'чацкий' in e['source_id'].lower()
+                           or 'chatsky' in e['source_id'].lower()]
+        assert not chatsky_present, "Mention must not become PRESENT_IN"
+
+    def test_ambiguity_field_present(self):
+        d = _api("Он ушёл.")
+        assert 'ambiguity' in d
+        amb = d['ambiguity']
+        for key in ('total_edges', 'ambiguous_edges', 'ambiguity_ratio'):
+            assert key in amb, f"Missing ambiguity key: {key}"
+
+    def test_no_edge_without_evidence(self):
+        d = _api("Фамусов\nЧацкий пришёл.")
+        for edge in d['knowledge_graph']['edges']:
+            assert edge['evidence'], f"Edge {edge['edge_id']} has no evidence"
+
+
+class TestReferenceStability:
+    """Reference metrics preserve unresolved pronouns as uncertainty."""
+
+    def test_unresolved_pronoun_is_reported(self):
+        d = _api("Он ушёл.")
+        r = d['reference_stability']
+        assert r['total_pronouns'] == 1
+        assert r['resolved_count'] == 0
+        assert r['unresolved_count'] == 1
+        assert r['stability'] == 0.0
+
+    def test_resolved_pronoun_is_counted(self):
+        d = _api("Фамусов\nГде София? Она обещала.")
+        r = d['reference_stability']
+        assert r['resolved_count'] >= 1
+        assert r['stability'] > 0
+
+
+class TestSceneRoleGrid:
+    """Scene participation distinguishes observation from inference."""
+
+    def test_mention_does_not_confirm_presence(self):
+        d = _api("Фамусов\nГде София?\n\nЧацкий\nСофия уехала.")
+        sofia = next(entity for entity in d['entities']
+                     if entity['canonical_name'].lower() == 'софия')
+        rows = [row for row in d['entity_grid']
+                if row['entity_id'] == sofia['entity_id']]
+        assert rows
+        assert all(row['scene_status'] != 'confirmed' for row in rows)
+
+    def test_speaker_is_confirmed_present(self):
+        d = _api("Фамусов\nЯ здесь.")
+        famusov = next(entity for entity in d['entities']
+                       if entity['canonical_name'].lower() == 'фамусов')
+        row = next(row for row in d['entity_grid']
+                   if row['entity_id'] == famusov['entity_id'])
+        assert row['scene_status'] == 'confirmed'
+        assert 'speaker' in row['roles']
+
+    def test_event_roles_are_optional_and_traceable(self):
+        d = _api("Фамусов открыл дверь.")
+        assert 'event_roles' in d
+        for event in d['event_roles']:
+            for role in event['roles']:
+                assert role['role'] in {
+                    'agent', 'patient', 'recipient', 'location',
+                    'direction', 'source', 'experiencer',
+                }
+                assert role['token_range'][0] <= role['token_range'][1]
+                assert role['source']
+
+    def test_entities_expose_observable_salience_only(self):
+        d = _api("Фамусов\nЯ пришёл.\n\nЧацкий\nЯ слушаю.")
+        assert d['entities']
+        for entity in d['entities']:
+            assert isinstance(entity['acting_score'], (int, float))
+            assert entity['salience'] in {'low', 'medium', 'high'}
+            assert entity['scene_count'] >= 1
+
+
 class TestSchemaVersion:
     """API schema versioning."""
     
     def test_schema_version(self):
         d = _api("Тест.")
-        assert d.get('schema_version') == 6, \
-            f"Expected schema_version=6, got {d.get('schema_version')}"
+        assert d.get('schema_version') == 7, \
+            f"Expected schema_version=7, got {d.get('schema_version')}"
 
 
 class TestDepthMetrics:

@@ -6,14 +6,25 @@ import traceback
 import json
 import yaml
 import os
+import time
+import uuid
+import hashlib
+import copy
+from collections import OrderedDict
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Tuple
 from contextlib import contextmanager
 from dialogue_parser import _is_scene_heading, _is_cast_list
-from fastapi import FastAPI, HTTPException, Depends
+from fastapi import FastAPI, HTTPException, Depends, UploadFile, File
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from pydantic import BaseModel
+from text_knowledge_graph import (
+    TextKnowledgeGraph, EdgeType, KnowledgeStatus, Evidence,
+)
+from document_structure import detect_chapter_boundaries
+from source_import import import_pdf, import_epub, import_docx
 
 # --- Configuration & Constants ---
 PARENT_DIR = Path(__file__).resolve().parent.parent
@@ -102,7 +113,13 @@ class KnowledgeBase:
         for w in words:
             if not w.isalnum(): continue
             low = w.lower(); search_words.append(low)
-            if 'е' in low: search_words.append(low.replace('е', 'ё'))
+            if 'е' in low:
+                search_words.append(low.replace('е', 'ё'))
+                # Single-position variants catch words like «ее» → «её»,
+                # where replacing every «е» produces a non-word («ёё»).
+                for i, ch in enumerate(low):
+                    if ch == 'е':
+                        search_words.append(low[:i] + 'ё' + low[i+1:])
             if 'ё' in low: search_words.append(low.replace('ё', 'е'))
         unique_search = list(set(search_words))
         if not unique_search: return
@@ -123,7 +140,13 @@ class KnowledgeBase:
 
     def get_info(self, word: str):
         w = word.lower(); res = self._paradigm_cache.get(w)
-        if not res and 'е' in w: res = self._paradigm_cache.get(w.replace('е', 'ё'))
+        if not res and 'е' in w:
+            res = self._paradigm_cache.get(w.replace('е', 'ё'))
+            if not res:
+                for i, ch in enumerate(w):
+                    if ch != 'е': continue
+                    res = self._paradigm_cache.get(w[:i] + 'ё' + w[i+1:])
+                    if res: break
         return res or []
 
     def get_best_lemma(self, word: str, preferred_gender: Optional[str] = None):
@@ -221,6 +244,12 @@ class NEREngine:
             if low.endswith(lex.patronymic_suffixes): return {"type": "person", "confidence": 0.95}
             if low.endswith(lex.surname_suffixes): return {"type": "person", "confidence": 0.6}
             return {"type": "unknown_capitalized", "confidence": 0.3}
+        # Morphology gate: a token whose every parse is pronominal/anaphoric
+        # (Ее, Все, Который) is a function word and can never be a person.
+        if all(('Apro' in entry['grams'] or 'Anph' in entry['grams'])
+               and not any(x in entry['grams'] for x in ('Name', 'Surn', 'Patr'))
+               for entry in info):
+            return {"type": "noise", "confidence": 0.0}
         confidence = 0.0; etype = "unknown"; is_animate = False
         for entry in info:
             g = entry['grams']
@@ -233,11 +262,57 @@ class NEREngine:
 # --- API ---
 app = FastAPI(title="Logos Full Spectrum Engine", version="5.2.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+app.add_middleware(GZipMiddleware, minimum_size=1024)
 kb = KnowledgeBase(DB_PATH, SUFFIX_DB_PATH, TIKHONOV_PATH)
+ner = NEREngine(kb)
 operators = LinguisticOperatorRegistry(LOGIC_TRIGGERS_PATH)
+
+MAX_INPUT_CHARS = 500_000
+QUICK_MODE_CHARS = 50_000
+ANALYSIS_CACHE_MAX_ENTRIES = 8
+_ANALYSIS_CACHE: OrderedDict[tuple[str, bool], dict] = OrderedDict()
+
+
+def _analysis_cache_key(text: str, quick_mode: bool) -> tuple[str, bool]:
+    return hashlib.sha256(text.encode('utf-8')).hexdigest(), quick_mode
+
+
+def _cached_analysis(key: tuple[str, bool]) -> dict | None:
+    result = _ANALYSIS_CACHE.get(key)
+    if result is not None:
+        _ANALYSIS_CACHE.move_to_end(key)
+    return result
+
+
+def _store_analysis(key: tuple[str, bool], result: dict) -> None:
+    _ANALYSIS_CACHE[key] = result
+    _ANALYSIS_CACHE.move_to_end(key)
+    while len(_ANALYSIS_CACHE) > ANALYSIS_CACHE_MAX_ENTRIES:
+        _ANALYSIS_CACHE.popitem(last=False)
+
 
 class TensionMapRequest(BaseModel):
     text: str
+    quick: bool = False
+
+
+@app.post('/api/import-source')
+async def import_source(file: UploadFile = File(...)):
+    suffix = Path(file.filename or '').suffix.lower()
+    if suffix not in {'.pdf', '.epub', '.docx'}:
+        raise HTTPException(status_code=415, detail={'code': 'unsupported_source_format'})
+    import tempfile
+    with tempfile.NamedTemporaryFile(suffix=suffix) as temp:
+        temp.write(await file.read())
+        temp.flush()
+        importer = {'.pdf': import_pdf, '.epub': import_epub, '.docx': import_docx}[suffix]
+        source = importer(temp.name)
+    return {
+        'source_format': source.source_format,
+        'text': source.text,
+        'sections': source.sections,
+        'exact_boundaries': True,
+    }
 
 # --- Genre Detection ---
 def detect_genre(text: str) -> str:
@@ -287,7 +362,9 @@ def _find_last_entity_by_gender(results, current_idx, target_gender, known_speak
               and len(r['word']) > 1 and r['word'][1:].islower()
               and r['word'].isalpha()):
             # Exclude sentence-initial words (preceded by sentence-ending punct)
-            if j > 0 and results[j-1]['word'] not in ('.', '!', '?', '…'):
+            # and pure function words (Ее, Все) rejected by the morphology gate.
+            if (j > 0 and results[j-1]['word'] not in ('.', '!', '?', '…')
+                    and ner.classify_candidate(r['word'])['type'] != 'noise'):
                 name = r['word']
         
         if not name or name == current_speaker or ' ' in name:
@@ -542,8 +619,9 @@ def segment_text(text: str, tokens: list, entity_map: dict) -> list:
             return (None, 0)
         
         # ── Speaker with colon: "ФАМУСОВ:" or "Charles:" ──
-        if s.endswith(':') and len(words) <= 3:
-            return ('speaker', 0.95)  # has explicit colon
+        if (s.endswith(':') and len(words) <= 3
+                and ner.classify_candidate(words[0])['type'] == 'person'):
+            return ('speaker', 0.95)  # explicit label with person evidence
         
         # ── Unbracketed stage directions inside turns ──
         # "Обнимаются.", "Садятся.", "Молчание.", "Уходит." — no parentheses
@@ -594,12 +672,15 @@ def segment_text(text: str, tokens: list, entity_map: dict) -> list:
         
         # Single Title Case word = speaker (Чацкий, Sofia, Молчалин)
         # Next line must exist and be either text or stage direction
-        if (len(words) == 1 and not all_caps and not has_numeral 
+        if (len(words) == 1 and not all_caps and not has_numeral
                 and not ends_with_punct and not has_bad_punct
                 and words[0][0].isupper()
+                and ner.classify_candidate(words[0])['type'] == 'person'
                 and next_line
-                and (next_line.startswith('(') or len(next_line.split()) > 1 or next_line != next_line.strip().title())):
-            return ('speaker', 0.90 if prev_blank else 0.80)  # Title Case, needs next_line
+                and (next_line.startswith('(') or len(next_line.split()) > 1
+                     or next_line.endswith(('.', '!', '?', '…'))
+                     or next_line != next_line.strip().title())):
+            return ('speaker', 0.90 if prev_blank else 0.80)  # verified Title Case name
         
         # Must be preceded by blank line for remaining structural markers
         # (headings — these require more context).
@@ -1417,8 +1498,503 @@ def segment_text(text: str, tokens: list, entity_map: dict) -> list:
     return deduped, speaker_map, line_type_map, line_type_conf_map, morph_boundary_signals, kl_boundary_signals, boundary_evidence
 
 
+def build_text_knowledge_graph(
+    results: list,
+    scenes: list,
+    dialogue_turns: list,
+    event_roles: list,
+    text_segments: list,
+) -> TextKnowledgeGraph:
+    """Convert already-computed Spectrum artefacts into a typed TKG.
+
+    Only observable structural facts become edges.  Similes, metaphors and
+    unresolved pronouns are represented as UNKNOWN edges with candidates,
+    never silently collapsed into IS_A or SAME_AS.
+    """
+    tkg = TextKnowledgeGraph()
+
+    # ── Scenes ───────────────────────────────────────────────────
+    for scene in scenes:
+        scene_node = tkg.get_or_create_scene(
+            scene['scene_id'],
+            token_range=scene.get('token_range'),
+        )
+        for participant in scene.get('participants', []):
+            eid = participant['entity_id']
+            entity_node = tkg.get_or_create_entity(eid, participant['name'])
+            ev_list = [
+                Evidence(
+                    source_module=ev.get('type', 'scene'),
+                    token_range=ev.get('token_range', [0, 0]),
+                    confidence=ev.get('confidence', 0.6),
+                )
+                for ev in participant.get('evidence', [])
+            ] or [Evidence('scene_participant', scene.get('token_range', [0, 0]), 0.5)]
+
+            status = participant.get('scene_status', 'unknown')
+            ks = (KnowledgeStatus.CONFIRMED if status == 'confirmed'
+                  else KnowledgeStatus.REJECTED if status == 'rejected'
+                  else KnowledgeStatus.UNKNOWN)
+
+            roles = participant.get('roles', [])
+            etype = (EdgeType.PRESENT_IN if 'speaker' in roles or 'present' in roles
+                     else EdgeType.MENTIONED_IN)
+            tkg.add_edge(entity_node.node_id, scene_node.node_id, etype,
+                         ev_list, knowledge_status=ks)
+
+    # ── Dialogue turns: speaker and addressee ────────────────────
+    for turn in dialogue_turns:
+        eid = turn.get('entity_id', '')
+        turn_id = str(turn.get('turn_id', ''))
+        turn_node = tkg.get_or_create_turn(
+            turn_id,
+            token_range=[turn.get('start_token', 0), turn.get('end_token', 0)],
+        )
+        if eid:
+            entity_node = tkg.get_or_create_entity(eid, turn.get('speaker', ''))
+            tkg.add_edge(
+                entity_node.node_id, turn_node.node_id, EdgeType.SPEAKER_OF,
+                [Evidence('dialogue_turn', [turn.get('start_token', 0),
+                                            turn.get('end_token', 0)], 0.95)],
+                knowledge_status=KnowledgeStatus.CONFIRMED,
+            )
+        # Addressees from vocative detection
+        for addressee_name in turn.get('addressees', []):
+            # Find entity_id for addressee name
+            addressee_eid = addressee_name.lower().replace('ё', 'е')
+            tkg.add_addressee(
+                turn_id,
+                addressee_eid,
+                [Evidence('vocative', [turn.get('start_token', 0),
+                                       turn.get('end_token', 0)], 0.85)],
+            )
+
+    # ── Event roles ──────────────────────────────────────────────
+    for ev_idx, event in enumerate(event_roles):
+        ev_label = event.get('predicate', f'event_{ev_idx}')
+        ev_range = event.get('token_range', [0, 0])
+        event_node = tkg.get_or_create_event(
+            f'ev_{ev_idx}', ev_label, token_range=ev_range,
+        )
+        _ROLE_TO_EDGE = {
+            'agent':       EdgeType.AGENT_OF,
+            'patient':     EdgeType.PATIENT_OF,
+            'experiencer': EdgeType.EXPERIENCER_OF,
+            'recipient':   EdgeType.RECIPIENT_OF,
+            'beneficiary': EdgeType.BENEFICIARY_OF,
+            'stimulus':    EdgeType.STIMULUS_OF,
+        }
+        for role_rec in event.get('roles', []):
+            eid = role_rec.get('entity_id', '')
+            if not eid:
+                continue
+            entity_node = tkg.get_or_create_entity(eid, role_rec.get('name', ''))
+            etype = _ROLE_TO_EDGE.get(role_rec['role'], EdgeType.AGENT_OF)
+            tkg.add_edge(
+                entity_node.node_id, event_node.node_id, etype,
+                [Evidence(
+                    'event_role:' + role_rec.get('source', 'morpho'),
+                    role_rec.get('token_range', ev_range),
+                    role_rec.get('confidence', 0.6),
+                )],
+            )
+
+    # ── Pronoun coreference ──────────────────────────────────────
+    for idx, token in enumerate(results):
+        ref = token.get('pronoun_ref')
+        if not ref:
+            continue
+        pronoun_nid = f'pronoun:{idx}'
+        tkg.add_node('pronoun', token['word'],
+                     token_range=[idx, idx], node_id=pronoun_nid)
+        ref_eid = ref.lower().replace('ё', 'е')
+        ref_node = tkg.get_or_create_entity(ref_eid, ref)
+        tkg.add_edge(
+            pronoun_nid, ref_node.node_id, EdgeType.REFERS_TO,
+            [Evidence(
+                'pronoun_' + token.get('pronoun_type', 'resolved'),
+                [idx, idx], 0.75,
+            )],
+            knowledge_status=KnowledgeStatus.UNKNOWN,
+        )
+
+    # ── Connective / logical edges from discourse roles ──────────
+    _DISCOURSE_TO_EDGE = {
+        'contrast':   EdgeType.CONTRASTS,
+        'cause':      EdgeType.CAUSES,
+        'condition':  EdgeType.CONDITIONS,
+        'conclusion': EdgeType.IMPLIES,
+        'temporal':   EdgeType.TEMPORAL,
+    }
+    for idx, token in enumerate(results):
+        dr = token.get('discourse_role', '')
+        if not dr or dr not in _DISCOURSE_TO_EDGE:
+            continue
+        etype = _DISCOURSE_TO_EDGE[dr]
+        # Build a minimal proposition node for the connective span
+        prop_nid = f'prop:{idx}'
+        tkg.add_node('proposition', token['word'],
+                     token_range=[idx, idx], node_id=prop_nid)
+        # Link to adjacent proposition nodes (left and right)
+        left_nid = f'prop:{idx - 1}' if idx > 0 else None
+        right_nid = f'prop:{idx + 1}' if idx + 1 < len(results) else None
+        if left_nid and left_nid in tkg._nodes and right_nid:
+            right_node = tkg.add_node(
+                'proposition', results[idx + 1]['word'],
+                token_range=[idx + 1, idx + 1], node_id=right_nid,
+            )
+            tkg.add_edge(
+                left_nid, right_node.node_id, etype,
+                [Evidence('discourse_role:' + dr, [idx, idx], 0.80)],
+                knowledge_status=KnowledgeStatus.CONFIRMED,
+            )
+
+    return tkg
+
+
+def compute_reference_stability(results: list) -> dict:
+    """Measure traceability of entity references without guessing referents.
+
+    A resolved pronoun is stable only when the existing pipeline emitted a
+    canonical ``pronoun_ref``. Unresolved pronouns remain visible as issues;
+    they are not silently treated as references to the nearest word.
+    """
+    pronoun_types = set(lex.pronouns_2per) | set(lex.pronouns_3masc) | set(lex.pronouns_3fem)
+    references = []
+    unresolved = []
+    for index, token in enumerate(results):
+        word = token.get('word', '').lower()
+        if word not in pronoun_types:
+            continue
+        record = {
+            'token_range': [index, index],
+            'pronoun': token['word'],
+            'turn_id': token.get('turn_id'),
+        }
+        if token.get('pronoun_ref'):
+            record['referent'] = token['pronoun_ref']
+            record['resolution_type'] = token.get('pronoun_type', 'resolved')
+            references.append(record)
+        else:
+            record['reason'] = 'no_confirmed_referent'
+            unresolved.append(record)
+    total = len(references) + len(unresolved)
+    return {
+        'total_pronouns': total,
+        'resolved_count': len(references),
+        'unresolved_count': len(unresolved),
+        'stability': round(len(references) / total, 3) if total else 1.0,
+        'resolved': references,
+        'unresolved': unresolved,
+    }
+
+
+_VERB_FRAMES_CACHE: dict | None = None
+
+
+def _load_verb_frames() -> dict:
+    """Load predicate valency frames from the shared Neuromorph YAML."""
+    global _VERB_FRAMES_CACHE
+    if _VERB_FRAMES_CACHE is None:
+        path = PARENT_DIR / 'neuromorph' / 'data' / 'reference' / 'rules' / 'russian_grammar_rules.yaml'
+        try:
+            with path.open(encoding='utf-8') as handle:
+                _VERB_FRAMES_CACHE = (yaml.safe_load(handle) or {}).get('verb_frames', {})
+        except (OSError, yaml.YAMLError):
+            _VERB_FRAMES_CACHE = {}
+    return _VERB_FRAMES_CACHE
+
+
+def _match_valency_frame(predicate: str, roles: list, words: list) -> tuple[dict | None, dict[int, str]]:
+    """Select the best predicate frame and explicitly matched argument roles.
+
+    A frame may override a generic morphological role only when its case and,
+    where present, governing preposition match the token evidence.
+    """
+    frames = _load_verb_frames().get(predicate, [])
+    best_frame, best_matches = None, {}
+    for frame in frames:
+        matches = {}
+        for spec_role, marker in re.findall(r'([A-Z_]+)\(([^)]*)\)', frame.get('pattern', '')):
+            for index, token_role in enumerate(roles):
+                if not token_role.case:
+                    continue
+                markers = marker.lower().split('/')
+                previous = words[index - 1].lower() if index else ''
+                if any(
+                    token_role.case == item or
+                    ('+' in item and token_role.case == item.rsplit('+', 1)[1] and
+                     previous == item.rsplit('+', 1)[0])
+                    for item in markers
+                ):
+                    matches[index] = spec_role
+                    break
+        if len(matches) > len(best_matches):
+            best_frame, best_matches = frame, matches
+    return best_frame, best_matches
+
+
+def extract_observable_event_roles(results: list) -> list[dict]:
+    """Extract conservative event-role evidence for Spectrum.
+
+    The neuromorph extractor remains optional because Spectrum must still run
+    when MLX or its model dependencies are unavailable. Returned spans refer
+    to the API token stream, not reconstructed text offsets.
+    """
+    try:
+        from neuromorph.strategy.role_learner import MorphoRoleAssigner
+    except Exception:
+        return []
+
+    assigner = MorphoRoleAssigner()
+    events = []
+    sentence_start = 0
+    sentence_tokens = []
+
+    def flush_sentence(start: int, token_rows: list) -> None:
+        words = [row['word'] for row in token_rows]
+        if not any(word[:1].isalpha() for word in words):
+            return
+        try:
+            frame = assigner.assign_roles(words)
+        except Exception:
+            return
+        predicate = next((tr.lemma or tr.token for tr in frame.roles
+                          if tr.role == 'ACTION'), '')
+        valency_frame, valency_matches = _match_valency_frame(predicate, frame.roles, words)
+        role_rows = []
+        for offset, token_role in enumerate(frame.roles):
+            valency_role = valency_matches.get(offset)
+            role = valency_role or token_role.role
+            if role not in {'AGENT', 'PATIENT', 'RECIPIENT', 'LOCATION', 'DIRECTION',
+                            'SOURCE', 'EXPERIENCER', 'BENEFICIARY', 'STIMULUS'}:
+                continue
+            if offset >= len(token_rows):
+                continue
+            token = token_rows[offset]
+            entity_id = token.get('entity_id', '')
+            name = token.get('clean') or token['word']
+            # Event-role evidence is broader than character identity. Keep
+            # lexical fillers (я, книжку, Франции) even when NER did not
+            # register them as characters; unresolved identity stays explicit.
+            if not entity_id:
+                lemma = token_role.lemma or token.get('lemma') or token['word']
+                entity_id = f'role:{lemma.lower().replace("ё", "е")}'
+            role_rows.append({
+                'entity_id': entity_id,
+                'name': name,
+                'role': role.lower(),
+                'token_range': [start + offset, start + offset],
+                'confidence': round(token_role.confidence, 2),
+                'source': 'verb_frame' if valency_role else token_role.source,
+            })
+        if role_rows:
+            observed_roles = {row['role'].upper() for row in role_rows}
+            obligatory = set(valency_frame.get('obligatory', [])) if valency_frame else set()
+            events.append({
+                'token_range': [start, start + len(token_rows) - 1],
+                'predicate': predicate,
+                'verb_frame': valency_frame.get('pattern') if valency_frame else frame.verb_frame,
+                'roles': role_rows,
+                'incomplete_event': bool(obligatory - observed_roles),
+                'missing_roles': sorted(obligatory - observed_roles),
+            })
+
+    for index, token in enumerate(results):
+        sentence_tokens.append(token)
+        if token['word'] in ('.', '!', '?', '…'):
+            flush_sentence(sentence_start, sentence_tokens)
+            sentence_start = index + 1
+            sentence_tokens = []
+    if sentence_tokens:
+        flush_sentence(sentence_start, sentence_tokens)
+    return events
+
+
+def build_scene_role_grid(results: list, text_segments: list, dialogue_turns: list,
+                          event_roles: list | None = None) -> tuple[list, list, list]:
+    """Build observable scene participation and an entity grid.
+
+    This deliberately does not infer narrative roles. A mention stays a
+    mention; only a speaker is confirmed present in its scene.
+    """
+    if not results:
+        return [], [], []
+
+    # Headings and high-confidence scene markers start a new scene. Paragraphs
+    # are intentionally not scene breaks: they are too frequent in prose.
+    starts = {0}
+    for seg in text_segments:
+        if seg.get('type') in ('heading', 'scene', 'divider'):
+            start = seg.get('after_token', -1) + 1
+            if 0 < start < len(results):
+                starts.add(start)
+    starts = sorted(starts)
+    ranges = []
+    for index, start in enumerate(starts):
+        end = (starts[index + 1] - 1) if index + 1 < len(starts) else len(results) - 1
+        ranges.append((f'scene_{index}', start, end))
+
+    def scene_for(token_index: int) -> str:
+        for scene_id, start, end in ranges:
+            if start <= token_index <= end:
+                return scene_id
+        return ranges[-1][0]
+
+    participants: dict[str, dict[str, dict]] = {scene_id: {} for scene_id, _, _ in ranges}
+    entity_totals: dict[str, dict] = {}
+    grid = []
+
+    def observe(scene_id: str, entity_id: str, name: str, role: str,
+                token_index: int, confidence: float, evidence_type: str) -> None:
+        if not entity_id or not name:
+            return
+        participant = participants[scene_id].setdefault(entity_id, {
+            'entity_id': entity_id, 'name': name, 'roles': set(),
+            'evidence': [], 'confidence': 0.0,
+        })
+        participant['roles'].add(role)
+        participant['confidence'] = max(participant['confidence'], confidence)
+        participant['evidence'].append({
+            'type': evidence_type, 'token_range': [token_index, token_index],
+            'confidence': confidence,
+        })
+        total = entity_totals.setdefault(entity_id, {
+            'entity_id': entity_id, 'canonical_name': name,
+            'mentions': 0, 'global_roles': set(),
+        })
+        total['mentions'] += 1
+        total['global_roles'].add(role)
+
+    for index, token in enumerate(results):
+        scene_id = scene_for(index)
+        entity_id = token.get('entity_id', '')
+        name = token.get('clean') or token.get('speaker') or token.get('word', '')
+        line_type = token.get('line_type', '')
+        entity_role = token.get('entity_role', '')
+
+        if line_type == 'SPEAKER' and entity_id:
+            observe(scene_id, entity_id, name, 'speaker', index, 0.98, 'speaker_label')
+            observe(scene_id, entity_id, name, 'present', index, 0.98, 'speaker_label')
+            continue
+        if entity_role == 'addressee' and entity_id:
+            observe(scene_id, entity_id, name, 'addressee', index, 0.85, 'vocative')
+            continue
+        if entity_role == 'mentioned' and entity_id:
+            observe(scene_id, entity_id, name, 'mentioned', index,
+                    token.get('confidence', 0.6), 'entity_mention')
+
+    # A speaker may be carried by all tokens in a turn, while the label itself
+    # has no entity_id. Add a turn-level, explicit observation as a fallback.
+    # Event roles are observed at sentence scope. They add semantic roles but
+    # do not by themselves establish physical presence in a scene.
+    for event in event_roles or []:
+        for event_role in event['roles']:
+            token_index = event_role['token_range'][0]
+            observe(scene_for(token_index), event_role['entity_id'], event_role['name'],
+                    event_role['role'], token_index, event_role['confidence'],
+                    'event_role:' + event_role['source'])
+
+    for turn in dialogue_turns:
+        entity_id = turn.get('entity_id', '')
+        if not entity_id:
+            continue
+        start = turn.get('start_token', 0)
+        scene_id = scene_for(start)
+        name = turn.get('speaker', '')
+        observe(scene_id, entity_id, name, 'speaker', start, 0.90, 'dialogue_turn')
+        observe(scene_id, entity_id, name, 'present', start, 0.90, 'dialogue_turn')
+
+    scenes = []
+    for scene_id, start, end in ranges:
+        scene_participants = []
+        for participant in participants[scene_id].values():
+            roles = participant['roles']
+            # Mention-only entities are explicitly unknown as to presence.
+            status = 'confirmed' if ('speaker' in roles or 'present' in roles) else 'unknown'
+            scene_participants.append({
+                'entity_id': participant['entity_id'], 'name': participant['name'],
+                'roles': sorted(roles), 'scene_status': status,
+                'confidence': round(participant['confidence'], 2),
+                'evidence': participant['evidence'],
+            })
+        scenes.append({
+            'scene_id': scene_id, 'token_range': [start, end],
+            'participants': scene_participants,
+        })
+
+        participant_ids = {p['entity_id'] for p in scene_participants}
+        for entity_id in entity_totals:
+            participant = participants[scene_id].get(entity_id)
+            grid.append({
+                'scene_id': scene_id, 'entity_id': entity_id,
+                'scene_status': ('confirmed' if participant and ('speaker' in participant['roles'] or 'present' in participant['roles'])
+                                 else 'unknown' if participant else 'rejected'),
+                'roles': sorted(participant['roles']) if participant else [],
+            })
+
+    # Salience is an observable ranking, not a claim about protagonist status.
+    # Weights reward explicit agency and speaking while a bare mention is weak.
+    role_weights = {
+        'speaker': 2.0, 'present': 0.0, 'agent': 3.0, 'experiencer': 2.0,
+        'patient': 1.0, 'recipient': 1.0, 'addressee': 0.5, 'mentioned': 0.0,
+        'location': 0.0, 'direction': 0.0, 'source': 0.0,
+    }
+    entity_scene_counts = {entity_id: 0 for entity_id in entity_totals}
+    entity_scores = {entity_id: 0.0 for entity_id in entity_totals}
+    for scene in scenes:
+        for participant in scene['participants']:
+            entity_id = participant['entity_id']
+            entity_scene_counts[entity_id] = entity_scene_counts.get(entity_id, 0) + 1
+            entity_scores[entity_id] = entity_scores.get(entity_id, 0.0) + sum(
+                role_weights.get(role, 0.0) for role in participant['roles']
+            )
+
+    entities = []
+    for entity in entity_totals.values():
+        entity_id = entity['entity_id']
+        # A small recurrence bonus differentiates a single local actor from an
+        # entity that remains active across scenes. Mention count is exposed
+        # separately, rather than inflated into agency.
+        score = entity_scores.get(entity_id, 0.0) + max(0, entity_scene_counts.get(entity_id, 0) - 1)
+        entities.append({
+            'entity_id': entity_id, 'canonical_name': entity['canonical_name'],
+            'mentions': entity['mentions'], 'scene_count': entity_scene_counts.get(entity_id, 0),
+            'global_roles': sorted(entity['global_roles']),
+            'acting_score': round(score, 2),
+            'salience': 'high' if score >= 6 else 'medium' if score >= 2 else 'low',
+        })
+    entities.sort(key=lambda entity: (-entity['acting_score'], entity['canonical_name']))
+    return scenes, entities, grid
+
+
 @app.post("/api/entropy_map")
 async def entropy_map(req: TensionMapRequest):
+    request_id = uuid.uuid4().hex
+    started_at = time.perf_counter()
+    timings_ms = {}
+    if len(req.text) > MAX_INPUT_CHARS:
+        raise HTTPException(
+            status_code=413,
+            detail={
+                'code': 'input_too_large',
+                'max_chars': MAX_INPUT_CHARS,
+                'input_chars': len(req.text),
+            },
+        )
+    quick_mode = req.quick or len(req.text) > QUICK_MODE_CHARS
+    cache_key = _analysis_cache_key(req.text, quick_mode)
+    cached = _cached_analysis(cache_key)
+    if cached is not None:
+        result = copy.deepcopy(cached)
+        result['meta'] = {
+            **result.get('meta', {}),
+            'request_id': request_id,
+            'cache_hit': True,
+            'timings_ms': {'cache_lookup': round((time.perf_counter() - started_at) * 1000, 2)},
+        }
+        return result
+    partial_features = []
     try:
         # Use finditer to capture positions for computing inter-token gaps
         token_pattern = re.compile(r"[\w-]+|[^\w\s]")
@@ -1430,11 +2006,19 @@ async def entropy_map(req: TensionMapRequest):
             prev_end = token_matches[j - 1].end()
             curr_start = token_matches[j].start()
             token_gaps.append(req.text[prev_end:curr_start])
-        if not tokens: return {"status": "success", "data": []}
+        if not tokens:
+            return {"schema_version": 7, "status": "success", "data": [],
+                    "meta": {"request_id": request_id, "input_chars": len(req.text),
+                             "token_count": 0, "timings_ms": {"total": 0}}}
+        timings_ms['tokenize'] = round((time.perf_counter() - started_at) * 1000, 2)
+        stage_started_at = time.perf_counter()
         kb.prefetch(tokens)
-        ner = NEREngine(kb)
         sentiment = SentimentEngine()
-        
+        timings_ms['prefetch_and_engines'] = round(
+            (time.perf_counter() - stage_started_at) * 1000, 2
+        )
+
+        stage_started_at = time.perf_counter()
         identities = {} # lemma -> {canonical, gender, role}
         resolved_entities = []
         
@@ -1459,7 +2043,11 @@ async def entropy_map(req: TensionMapRequest):
                 
                 role = "mention"
                 if ni < len(tokens) and tokens[ni] == ":": role = "speaker"
-                elif ni + 1 < len(tokens) and tokens[ni] == "—": role = "speaker"
+                elif (ni + 1 < len(tokens) and tokens[ni] == "—"
+                      and res['type'] == "person"):
+                    # Dash promotion needs morphological person evidence;
+                    # otherwise any capitalized word before "—" became a 1.0 speaker.
+                    role = "speaker"
                 
                 id_key = lemmas[-1].lower()
                 if id_key not in identities or len(full_canonical) > len(identities[id_key]['canonical']):
@@ -1485,6 +2073,11 @@ async def entropy_map(req: TensionMapRequest):
                     "confidence": 0.8, "canonical": id_info['canonical']
                 }
 
+        timings_ms['entity_detection'] = round(
+            (time.perf_counter() - stage_started_at) * 1000, 2
+        )
+
+        stage_started_at = time.perf_counter()
         results = []
         in_quotes = False
         
@@ -1493,14 +2086,20 @@ async def entropy_map(req: TensionMapRequest):
         _modal_particles = lex.modal_roles
         _prep_semantic_roles = lex.prep_roles
         
+        _pos_overrides = lex.pos_overrides
+        parse_cache = {}
+
         for i, t in enumerate(tokens):
             if t in ['"', '«', '»']: in_quotes = not in_quotes
             ent = entity_map.get(i)
             
-            # Entropy Calculation (True H_morph)
+            # Full morpheme entropy loads/searches the root index. In quick mode
+            # use the bounded length proxy so a large already-opened document does
+            # not block the UI for minutes before roles/structure can render.
             h = 0.5
             if t[0].isalnum():
-                h = kb.get_h_morph(t)
+                h = (round(math.log2(len(t) // 3 + 1), 2)
+                     if quick_mode else kb.get_h_morph(t))
             
             # Operator Detection
             op_type = operators.get_type(t)
@@ -1509,18 +2108,19 @@ async def entropy_map(req: TensionMapRequest):
             tok_pos = ''
             tok_lemma = ''
             tok_grammemes = {}
-            tok_service_type = ''    # 'conjunction', 'particle', 'preposition', 'interjection'
-            tok_discourse_role = ''  # for conjunctions: 'contrast', 'cause', etc.
-            tok_modal_type = ''      # for particles: 'interrogative', 'negation', etc.
-            tok_sem_role = ''        # for prepositions: 'direction', 'source', etc.
-            
-            _pos_overrides = lex.pos_overrides
+            tok_service_type = ''
+            tok_discourse_role = ''
+            tok_modal_type = ''
+            tok_sem_role = ''
             
             if t[0:1].isalpha():
                 t_lower = t.lower()
                 override = _pos_overrides.get(t_lower)
                 try:
-                    parses = inflector_analyze(t)
+                    parses = parse_cache.get(t_lower)
+                    if parses is None:
+                        parses = inflector_analyze(t)
+                        parse_cache[t_lower] = parses
                     if override:
                         # Use override POS + lemma, but still get grammemes from parse
                         tok_pos, tok_lemma = override
@@ -1562,13 +2162,17 @@ async def entropy_map(req: TensionMapRequest):
                 elif tok_pos == 'INTJ':
                     tok_service_type = 'interjection'
             
-            affect = sentiment.get_affect(t, tok_lemma)
+            # Affect lookup performs a second morphology resolution on misses;
+            # omit it in quick mode because the UI only needs structure/roles.
+            affect = ({'val': 0, 'aro': 0, 'conc': 0}
+                      if quick_mode else sentiment.get_affect(t, tok_lemma))
             tok_dict = {
                 "word": t, "clean": ent['canonical'] if ent else t, "h": h,
                 "s": sentiment.get_score(t),
                 "val": affect['val'], "aro": affect['aro'], "conc": affect['conc'],
                 "pos": tok_pos, "lemma": tok_lemma,
-                "is_entity": ent is not None, "context_role": ent['role'] if ent else "none",
+                "is_entity": ent is not None, "entity_type": ent['type'] if ent else "none",
+                "context_role": ent['role'] if ent else "none",
                 "social": ent['social'] if ent else "none",
                 "confidence": ent['confidence'] if ent else 0.0,
                 "is_dialogue": in_quotes or t in ['—', '-'],
@@ -1590,14 +2194,88 @@ async def entropy_map(req: TensionMapRequest):
                 tok_dict['sem_role'] = tok_sem_role
                 
             results.append(tok_dict)
+        timings_ms['token_analysis'] = round(
+            (time.perf_counter() - stage_started_at) * 1000, 2
+        )
+
+        if quick_mode:
+            # Keep quick mode bounded: retain the cheap line-structure pass so
+            # the UI can still render speakers, headings, and stage directions.
+            quick_segments, quick_speakers, quick_line_types, quick_line_conf, _, _, _ = segment_text(
+                req.text, tokens, entity_map
+            )
+            for token_index, token_result in enumerate(results):
+                token_result['line_type'] = quick_line_types.get(token_index, 'TEXT')
+                token_result['line_type_confidence'] = quick_line_conf.get(token_index, 0.5)
+                speaker = quick_speakers.get(token_index)
+                if speaker:
+                    token_result['speaker'] = speaker['speaker']
+                    token_result['turn_id'] = speaker['turn_id']
+                    token_result['speaker_confidence'] = speaker.get('speaker_confidence', 0.9)
+            quick_document_structure = [
+                boundary.to_dict()
+                for boundary in detect_chapter_boundaries(req.text)
+            ]
+            partial_features.extend([
+                'stylometry', 'plot_arc', 'segmentation', 'dialogue_roles',
+                'text_knowledge_graph', 'document_structure',
+            ])
+            timings_ms['total'] = round((time.perf_counter() - started_at) * 1000, 2)
+            result = {
+                'schema_version': 7,
+                'status': 'partial',
+                'meta': {
+                    'request_id': request_id,
+                    'input_chars': len(req.text),
+                    'token_count': len(tokens),
+                    'quick_mode': True,
+                    'partial_features': partial_features,
+                    'timings_ms': timings_ms,
+                },
+                'data': results,
+                'scenes': [],
+                'entities': [],
+                'entity_grid': [],
+                'event_roles': [],
+                'reference_stability': None,
+                'knowledge_graph': None,
+                'ambiguity': None,
+                'stylometry': None,
+                'depth': None,
+                'service_word_stats': {},
+                'rhythm': [],
+                'genre': 'prose',
+                'dialogue_format': 'unknown',
+                'plot_arc': None,
+                'segments': [],
+                'morph_boundaries': [],
+                'kl_boundaries': [],
+                'boundary_evidence': [],
+                'turn_pairs': [],
+                'dialogue_turns': [],
+                'text_blocks': [],
+                'document_structure': quick_document_structure,
+            }
+            _store_analysis(cache_key, result)
+            return result
+
         # --- Stylometry & Rhythm ---
-        stylometry_result = compute_stylometry(req.text)
+        stage_started_at = time.perf_counter()
+        stylometry_result = None
+        if quick_mode:
+            partial_features.append('stylometry')
+        else:
+            stylometry_result = compute_stylometry(req.text)
+        timings_ms['stylometry'] = round(
+            (time.perf_counter() - stage_started_at) * 1000, 2
+        )
         # Sentence lengths for rhythm track
         sent_re = re.compile(r'[.!?…]+[\s]+|[.!?…]+$')
         raw_sents = sent_re.split(req.text)
         sentence_lengths = [len(re.findall(r'[а-яёА-ЯЁa-zA-Z]+', s)) for s in raw_sents if s.strip()]
 
         # --- Plot Arc Analysis (Formal System Σ) ---
+        stage_started_at = time.perf_counter()
         plot_arc = None
         try:
             pr = analyze_plot(req.text)
@@ -1674,7 +2352,12 @@ async def entropy_map(req: TensionMapRequest):
                 'diagnostics': [{'type': 'error', 'message': f'Ошибка анализа сюжета: {type(e).__name__}', 'severity': 'error'}],
             }
 
+        timings_ms['plot_analysis'] = round(
+            (time.perf_counter() - stage_started_at) * 1000, 2
+        )
+
         # --- Structural Segmentation ---
+        stage_started_at = time.perf_counter()
         text_segments = []
         speaker_map = {}
         line_type_map = {}
@@ -1707,57 +2390,136 @@ async def entropy_map(req: TensionMapRequest):
                     r['speaker'] = prev['speaker']
                     r['turn_id'] = prev['turn_id']
 
+        timings_ms['segmentation'] = round(
+            (time.perf_counter() - stage_started_at) * 1000, 2
+        )
+
         # --- Entity registry + Addressee detection ---
         # Build canonical entity registry from speaker segments
         # Handles: ФАМУСОВ / Фамусов / фамусов → entity_id 'famusov'
         known_speaker_names = set()
         entity_registry = {}  # lowercase_form → {'canonical': str, 'entity_id': str}
         
+        # Lazy-load proper_nouns classifier once per request.
+        # It uses the project's own gazetteer (35K entries) + inflector,
+        # no pymorphy3 dependency.
+        try:
+            from engine.language.proper_nouns import classify as _pn_classify
+        except Exception:
+            _pn_classify = None
+
+        def _proper_noun_eid(surface: str) -> tuple[str, str]:
+            """Return (canonical, entity_id) preserving gender for surnames.
+
+            Priority:
+            1. Paradigm nominative lookup — find nomn form matching surface gender.
+               This correctly distinguishes Сидоров (masc) from Сидорова (femn):
+               both share lemma 'сидоров' in the DB, but their nomn forms differ.
+            2. proper_nouns.classify() → info.lemma (gazetteer-backed, but may
+               collapse gender for surnames — used as fallback only).
+            3. inflector_analyze()[0].lemma for known non-surname words.
+            4. Surface form as-is (OOV fallback).
+
+            Invariant: entity_id(Сидоров) ≠ entity_id(Сидорова).
+            """
+            from engine.language.inflector import _cached_reverse_lookup
+            canonical_title = surface.title() if surface.isupper() else surface
+            surface_lower = canonical_title.lower()
+
+            # Step 1: find the nominative form that matches surface gender.
+            # The paradigm stores all forms; we look for nomn+sing of the
+            # same gender as the surface form.
+            try:
+                rows = _cached_reverse_lookup(surface_lower)
+                if rows:
+                    # Determine surface gender from its paradigm row
+                    surface_gender = None
+                    surface_is_surn = False
+                    for lemma, pos, gram, form in rows:
+                        if 'femn' in gram and 'nomn' in gram:
+                            surface_gender = 'femn'
+                            surface_is_surn = 'Surn' in gram
+                            break
+                        if 'masc' in gram and 'nomn' in gram:
+                            surface_gender = 'masc'
+                            surface_is_surn = 'Surn' in gram
+
+                    if surface_is_surn and surface_gender:
+                        # For surnames: entity_id = the nomn form of the
+                        # correct gender, not the lemma.
+                        # Сидорова (femn,nomn) → eid='сидорова'
+                        # Сидоров  (masc,nomn) → eid='сидоров'
+                        eid = surface_lower.replace('ё', 'е')
+                        return canonical_title, eid
+            except Exception:
+                pass
+
+            # Step 2: gazetteer (may collapse gender — use only for non-surnames
+            # or when step 1 found no Surn tag)
+            if _pn_classify is not None:
+                try:
+                    info = _pn_classify(canonical_title, is_sentence_start=False)
+                    if info and info.lemma:
+                        from engine.language.proper_nouns import NameSubtype
+                        lemma_form = info.lemma
+                        # Guard: gazetteer lemma must not be shorter than surface
+                        # by 2+ chars — protects against Астров→астр
+                        # (gazetteer stores 'астр' as lemma for the name Астр,
+                        # but Астров is a surname, not a name).
+                        if len(lemma_form) <= len(surface_lower) - 2:
+                            # Lemma is suspiciously short — use surface form
+                            eid = surface_lower.replace('ё', 'е')
+                            return canonical_title, eid
+                        if info.subtype != NameSubtype.SURNAME:
+                            # For names/patronymics gazetteer lemma is reliable
+                            eid = lemma_form.replace('ё', 'е')
+                            return lemma_form.title(), eid
+                        # For surnames: prefer surface form (step 1 already handled)
+                        eid = surface_lower.replace('ё', 'е')
+                        return canonical_title, eid
+                except Exception:
+                    pass
+
+            # Step 3: inflector lemma for non-proper words
+            try:
+                parses = inflector_analyze(canonical_title)
+                if parses and parses[0].pos not in ('UNKN',):
+                    lemma = getattr(parses[0], 'lemma', None)
+                    if lemma:
+                        eid = lemma.lower().replace('ё', 'е')
+                        return lemma.title(), eid
+            except Exception:
+                pass
+
+            # Step 4: OOV fallback
+            eid = surface_lower.replace('ё', 'е')
+            return canonical_title, eid
+
         for s in text_segments:
             if s['type'] == 'speaker':
                 raw_name = s.get('reason', '').replace('form:', '').strip()
                 if not raw_name:
                     continue
                 known_speaker_names.add(raw_name)
-                canonical = raw_name.title() if raw_name.isupper() else raw_name
-                eid = canonical.lower().replace('ё', 'е')
-                
-                # Register all case variants
-                for variant in (raw_name, raw_name.lower(), raw_name.upper(), canonical):
+                canonical, eid = _proper_noun_eid(raw_name)
+
+                # Register surface variants → same canonical/eid
+                for variant in (raw_name, raw_name.lower(), raw_name.upper(), canonical,
+                                canonical.lower()):
                     entity_registry[variant] = {'canonical': canonical, 'entity_id': eid}
-                
-                # Try inflector for oblique forms (Фамусова → Фамусов)
-                try:
-                    parses = inflector_analyze(canonical)
-                    if parses:
-                        lemma = getattr(parses[0], 'lemma', None)
-                        if lemma and lemma != canonical.lower():
-                            canon_from_lemma = lemma.title()
-                            entity_registry[lemma] = {'canonical': canon_from_lemma, 'entity_id': eid}
-                            entity_registry[lemma.title()] = {'canonical': canon_from_lemma, 'entity_id': eid}
-                except Exception:
-                    pass
 
         # Also register entities from NER (entity_map) — covers characters
         # who are mentioned but never speak (e.g. Молчалин in narrative prose)
         for idx, ent_info in entity_map.items():
             if ent_info.get('type') == 'person' and ent_info.get('canonical'):
-                canonical = ent_info['canonical']
-                eid = canonical.lower().replace('ё', 'е')
-                if canonical.lower() not in entity_registry:
-                    for variant in (canonical, canonical.lower(), canonical.upper(), canonical.title()):
+                surface = ent_info['canonical']
+                if surface.lower() not in entity_registry:
+                    canonical, eid = _proper_noun_eid(surface)
+                    for variant in (surface, surface.lower(), surface.upper(),
+                                    canonical, canonical.lower()):
                         if variant not in entity_registry:
-                            entity_registry[variant] = {'canonical': canonical, 'entity_id': eid}
-                    # Also try inflector for oblique forms
-                    try:
-                        parses = inflector_analyze(canonical)
-                        if parses:
-                            lemma = getattr(parses[0], 'lemma', None)
-                            if lemma and lemma.lower() not in entity_registry:
-                                entity_registry[lemma] = {'canonical': canonical, 'entity_id': eid}
-                                entity_registry[lemma.title()] = {'canonical': canonical, 'entity_id': eid}
-                    except Exception:
-                        pass
+                            entity_registry[variant] = {'canonical': canonical,
+                                                        'entity_id': eid}
         
         def resolve_entity(word):
             """Resolve word to (canonical_name, entity_id) or (None, None)."""
@@ -2146,6 +2908,23 @@ async def entropy_map(req: TensionMapRequest):
             dt['segments'] = segments_internal
             dialogue_turns.append(dt)
         
+        # --- Observable reference stability, event roles, scene participants, and entity grid ---
+        reference_stability = compute_reference_stability(results)
+        event_roles = extract_observable_event_roles(results)
+        timings_ms['event_roles'] = round((time.perf_counter() - started_at) * 1000, 2)
+        scenes, entities, entity_grid = build_scene_role_grid(
+            results, text_segments, dialogue_turns, event_roles
+        )
+        timings_ms['scenes'] = round((time.perf_counter() - started_at) * 1000, 2)
+
+        # --- Text Knowledge Graph ---
+        tkg = build_text_knowledge_graph(
+            results, scenes, dialogue_turns, event_roles, text_segments,
+        )
+        tkg_dict = tkg.to_dict()
+        ambiguity = tkg.compute_ambiguity()
+        timings_ms['tkg'] = round((time.perf_counter() - started_at) * 1000, 2)
+
         # --- Build text_blocks[] ---
         text_blocks = []
         for seg in text_segments:
@@ -2169,6 +2948,11 @@ async def entropy_map(req: TensionMapRequest):
         except Exception:
             pass
         
+        # Document boundaries are structural metadata for navigation, not scenes.
+        document_structure = [
+            boundary.to_dict() for boundary in detect_chapter_boundaries(req.text)
+        ]
+
         # Compute depth metrics
         depth = compute_depth_metrics(results)
         
@@ -2207,11 +2991,27 @@ async def entropy_map(req: TensionMapRequest):
             'pos_distribution': pos_distribution,
         }
         
+        timings_ms['total'] = round((time.perf_counter() - started_at) * 1000, 2)
         return {
-            "schema_version": 6,
+            "schema_version": 7,
             "status": "success",
+            "meta": {
+                "request_id": request_id,
+                "input_chars": len(req.text),
+                "token_count": len(tokens),
+                "quick_mode": quick_mode,
+                "partial_features": partial_features,
+                "timings_ms": timings_ms,
+            },
             "data": results,
-            "stylometry": stylometry_result.to_dict(),
+            "scenes": scenes,
+            "entities": entities,
+            "entity_grid": entity_grid,
+            "event_roles": event_roles,
+            "reference_stability": reference_stability,
+            "knowledge_graph": tkg_dict,
+            "ambiguity": ambiguity,
+            "stylometry": stylometry_result.to_dict() if stylometry_result else None,
             "depth": depth,
             "service_word_stats": service_word_stats,
             "rhythm": sentence_lengths,
@@ -2225,6 +3025,7 @@ async def entropy_map(req: TensionMapRequest):
             "turn_pairs": turn_pairs,
             "dialogue_turns": dialogue_turns,
             "text_blocks": text_blocks,
+            "document_structure": document_structure,
         }
     except Exception:
         print(traceback.format_exc()); raise HTTPException(status_code=500, detail="Error")

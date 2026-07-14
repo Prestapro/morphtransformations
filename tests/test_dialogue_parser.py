@@ -42,6 +42,16 @@ class TestSceneHeading:
     def test_speaker_still_works(self):
         """Regular speaker names should still work."""
         assert _is_drama_speaker_candidate("Фамусов", KNOWN)
+
+    def test_sentence_with_capitalized_single_word_is_not_speaker(self):
+        """A dense drama block must retain its third short utterance."""
+        text = "Фамусов\nПервая.\nМолчалин\nВторая.\nЧацкий\nТретья."
+        turns = DialogueParser().parse(text)
+        assert [(turn.speaker, turn.full_speech()) for turn in turns] == [
+            ('Фамусов', 'Первая.'),
+            ('Молчалин', 'Вторая.'),
+            ('Чацкий', 'Третья.'),
+        ]
     
     def test_negative_speech(self):
         """Regular speech should not be a scene heading."""
