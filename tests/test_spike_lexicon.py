@@ -10,9 +10,10 @@ from spike_lexicon import SpikeLexicon
 
 
 @pytest.fixture(scope='module')
-def slex():
+def slex(tmp_path_factory):
     """Bootstrap once for all tests (expensive: ~300 inflector calls)."""
-    sl = SpikeLexicon()
+    codebook_path = tmp_path_factory.mktemp("spike-lexicon") / "codebook"
+    sl = SpikeLexicon(codebook_path=codebook_path)
     count = sl.bootstrap()
     assert count > 50, f"Expected >50 words bootstrapped, got {count}"
     return sl

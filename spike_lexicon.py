@@ -82,10 +82,19 @@ class SpikeLexicon:
     Subsequent accesses use spike similarity for word classification.
     """
     
-    def __init__(self, yaml_path: Path = _YAML_PATH,
-                 threshold: float = _DEFAULT_THRESHOLD):
+    def __init__(
+        self,
+        yaml_path: Path = _YAML_PATH,
+        threshold: float = _DEFAULT_THRESHOLD,
+        codebook_path: Path | None = None,
+    ):
         self._yaml_path = yaml_path
         self._threshold = threshold
+        self._codebook_path = (
+            codebook_path
+            if codebook_path is not None
+            else Path(__file__).parent / "data" / "spike_codebook"
+        )
         self._encoder = None
         self._codebook = None
         self._bootstrapped = False
@@ -106,10 +115,9 @@ class SpikeLexicon:
     def codebook(self):
         if self._codebook is None:
             from neuromorph.memory.spike_codebook import SpikeCodebook
-            cb_path = Path(__file__).parent / 'data' / 'spike_codebook'
             self._codebook = SpikeCodebook(
                 d_spike=self.encoder.total_dim,  # 270
-                path=cb_path,
+                path=self._codebook_path,
             )
         return self._codebook
     
