@@ -1063,136 +1063,42 @@ def segment_text(text: str, tokens: list, entity_map: dict) -> list:
         # Stored for inspector, not used for segmentation directly
     except Exception:
         thematic = None
+    # --- Pass 2.5: morphology-backed prose dialogue attribution ---
+    # Engine turns use half-open character offsets; Spectrum exposes inclusive
+    # token ranges. Keep this adapter structural and bounded.
+    try:
+        from engine.dialogue import parse_prose_dialogue
+
+        token_spans = list(re.finditer(r"[\w-]+|[^\w\s]", text))
+        prose_turns = parse_prose_dialogue(text)
+        for prose_turn in prose_turns:
+            covered = [
+                idx for idx, token_match in enumerate(token_spans)
+                if token_match.start() >= prose_turn.speech_start
+                and token_match.end() <= prose_turn.speech_end
+            ]
+            if not covered:
+                continue
+            token_start, token_end = covered[0], covered[-1]
+            segments.append({
+                'after_token': max(0, token_start - 1),
+                'type': 'speaker',
+                'level': 2,
+                'reason': f'form:{prose_turn.speaker or ""}',
+                'confidence': prose_turn.confidence,
+                'source_format': 'prose_em',
+                'token_start': token_start,
+                'token_end': token_end,
+            })
+            for token_index in range(token_start, token_end + 1):
+                line_type_map[token_index] = 'TEXT'
+                line_type_conf_map[token_index] = prose_turn.confidence
+    except Exception as exc:
+        print(f'Prose dialogue attribution failed: {exc}')
+
     
-    # --- Pass 2.5: Prose dialogue parser integration ---
-    # If no structural speaker labels found, try prose parser
-    structural_speakers = [s for s in segments if s['type'] == 'speaker']
-    if len(structural_speakers) < 2:
-        try:
-            # dialogue_parser.py is in same directory as app.py (morphtransformations/)
-            _dp_dir = str(Path(__file__).parent)
-            if _dp_dir not in sys.path:
-                sys.path.insert(0, _dp_dir)
-            from dialogue_parser import DialogueParser, detect_format as dp_detect_format
-            from dialogue_parser import TextFormat
-            
-            fmt = dp_detect_format(text)
-            if fmt in (TextFormat.PROSE_EM, TextFormat.PROSE_Q, TextFormat.MIXED):
-                parser = DialogueParser()
-                prose_turns = parser.parse(text)
-                
-                if prose_turns:
-                    # Strategy: for each prose turn with a speaker, find the 
-                    # em-dash that starts the turn's speech in the token stream.
-                    # Approach: scan tokens for the speaker's name near attribution verb,
-                    # then trace back to the preceding em-dash.
-                    
-                    # Build a set of used positions to avoid duplicates
-                    used_positions = set()
-                    
-                    for turn in prose_turns:
-                        if not turn.speaker or turn.speaker in ('UNKNOWN', 'narrator'):
-                            continue
-                        
-                        # Find the speaker name in the token stream
-                        spk_name = turn.speaker
-                        for ti, tok in enumerate(tokens):
-                            if tok == spk_name and ti not in used_positions:
-                                # Found the speaker name — find the nearest preceding em-dash
-                                dash_pos = None
-                                for j in range(ti - 1, max(ti - 10, -1), -1):
-                                    if j >= 0 and tokens[j] == '—':
-                                        dash_pos = j
-                                        break
-                                
-                                if dash_pos is not None:
-                                    # The turn starts at the em-dash BEFORE this one
-                                    # (em-dash before the speech, not the attribution dash)
-                                    # Look further back for the speech-starting dash
-                                    speech_dash = None
-                                    for j in range(dash_pos - 1, max(dash_pos - 20, -1), -1):
-                                        if j >= 0 and tokens[j] == '—':
-                                            speech_dash = j
-                                            break
-                                    
-                                    target_pos = speech_dash if speech_dash is not None else dash_pos
-                                    if target_pos not in used_positions:
-                                        used_positions.add(target_pos)
-                                        used_positions.add(ti)
-                                        segments.append({
-                                            'after_token': max(0, target_pos - 1),
-                                            'type': 'speaker',
-                                            'level': 2,
-                                            'reason': f'form:{spk_name}',
-                                            'confidence': 0.80,
-                                            'source_format': fmt.value,
-                                        })
-                                        break  # found this speaker, move to next turn
-        except ImportError:
-            pass  # dialogue_parser not available
-        except Exception as e:
-            print(f'Prose parser integration failed: {e}')
-    
-    # --- Pass 2.6: Unattributed em-dash dialogue fallback ---
-    # If still no speakers found, detect em-dash dialogue lines
-    # and assign alternating pseudo-speakers (Голос A / Голос B)
-    structural_speakers_after = [s for s in segments if s['type'] == 'speaker']
-    if len(structural_speakers_after) < 2:
-        # Find which tokens start lines beginning with em-dash
-        # by scanning the original text line-by-line
-        lines = text.split('\n')
-        dash_lines = []  # (line_index, stripped_line) for lines starting with '—'
-        for li, line in enumerate(lines):
-            stripped = line.strip()
-            if stripped.startswith('—'):
-                dash_lines.append(li)
-        
-        if len(dash_lines) >= 2:
-            # Find the token indices for each dash-line's '—'
-            # Strategy: track which line each token belongs to
-            # by matching original text positions
-            dash_turn_starts = []
-            
-            # Rebuild line → token index mapping from text positions
-            # Tokenizer splits text into tokens; we need to find '—' tokens
-            # that correspond to dash_lines
-            line_start_chars = []
-            pos = 0
-            for line in lines:
-                line_start_chars.append(pos)
-                pos += len(line) + 1  # +1 for \n
-            
-            for dl_idx in dash_lines:
-                line_char_start = line_start_chars[dl_idx]
-                # Find the '—' token at or near this character position
-                for ti, tok in enumerate(tokens):
-                    if tok == '—' and ti not in dash_turn_starts:
-                        # Check: is this token near the line start?
-                        # Simple: scan by token position in text
-                        tok_pos = text.find('—', line_char_start)
-                        if tok_pos is not None and tok_pos < line_char_start + 5:
-                            dash_turn_starts.append(ti)
-                            break
-            
-            if len(dash_turn_starts) >= 2:
-                # Alternating speakers: A, B, A, B, ...
-                _PSEUDO_SPEAKERS = ['Голос A', 'Голос B']
-                for idx, dash_pos in enumerate(dash_turn_starts):
-                    spk = _PSEUDO_SPEAKERS[idx % 2]
-                    segments.append({
-                        'after_token': max(0, dash_pos),
-                        'type': 'speaker',
-                        'level': 2,
-                        'reason': f'form:{spk}',
-                        'confidence': 0.60,
-                        'source_format': 'prose_em_unattributed',
-                    })
-                    line_type_map[dash_pos] = 'SPEAKER'
-                    line_type_conf_map[dash_pos] = 0.60
     # Sort by position, deduplicate (keep highest level)
     segments.sort(key=lambda s: (s['after_token'], -s['level']))
-    
-    # Deduplicate: at same position, keep highest level
     deduped = []
     seen_positions = set()
     for s in segments:
@@ -1446,19 +1352,23 @@ def segment_text(text: str, tokens: list, entity_map: dict) -> list:
             if speaker_tok is None:
                 speaker_tok = seg_tok  # fallback
             
-            # Token range: from speaker_tok to next speaker/heading seg
-            if si + 1 < len(speaker_segs):
+            # Engine prose turns carry exact finite inclusive token bounds.
+            explicit_start = seg.get('token_start')
+            explicit_end = seg.get('token_end')
+            if explicit_start is not None and explicit_end is not None:
+                speaker_tok = explicit_start
+                end_tok = explicit_end + 1
+            elif si + 1 < len(speaker_segs):
                 end_tok = speaker_segs[si + 1][0]
-                # Find actual start of next segment (skip trailing punct from our turn)
-                # The end_tok points to after_token of next seg — include trailing punct in current turn
-                # by extending to include it
                 if end_tok < len(tokens) and line_type_map.get(end_tok) == 'TEXT' and tokens[end_tok] in '.?!…;:':
-                    end_tok += 1  # include trailing punct in current turn
+                    end_tok += 1
             else:
                 end_tok = len(tokens)
             
-            # Get confidence from speaker line classification
-            spk_conf = line_type_conf_map.get(speaker_tok, 0.8)
+            # Explicit attribution confidence wins over line-form evidence.
+            spk_conf = max(0.0, min(1.0, seg.get(
+                'confidence', line_type_conf_map.get(speaker_tok, 0.0)
+            )))
             # Mark the speaker name token
             speaker_map[speaker_tok] = {'speaker': speaker_name, 'turn_id': turn_id, 'is_speaker_label': True, 'speaker_confidence': spk_conf}
             # Mark all tokens in this turn (skip HEADER tokens, start after speaker token)
@@ -1769,23 +1679,32 @@ def extract_observable_event_roles(results: list) -> list[dict]:
             if role not in {'AGENT', 'PATIENT', 'RECIPIENT', 'LOCATION', 'DIRECTION',
                             'SOURCE', 'EXPERIENCER', 'BENEFICIARY', 'STIMULUS'}:
                 continue
+            if role == 'SOURCE' and not valency_role:
+                continue
             if offset >= len(token_rows):
                 continue
             token = token_rows[offset]
+            parses = inflector_analyze(token['word'])
+            if any(getattr(parse, 'pos', '') in {'PREP', 'CONJ', 'PRCL', 'INTJ', 'PART', 'SCONJ'}
+                   for parse in parses):
+                continue
             entity_id = token.get('entity_id', '')
-            name = token.get('clean') or token['word']
-            # Event-role evidence is broader than character identity. Keep
-            # lexical fillers (я, книжку, Франции) even when NER did not
-            # register them as characters; unresolved identity stays explicit.
-            if not entity_id:
+            if entity_id:
+                name = token.get('clean') or token['word']
+            else:
+                # An unresolved filler names only itself. Borrowing `clean`
+                # here would attach another entity's canonical name to a
+                # freshly minted role:<lemma> identity.
+                name = token['word']
                 lemma = token_role.lemma or token.get('lemma') or token['word']
                 entity_id = f'role:{lemma.lower().replace("ё", "е")}'
+            evidence_confidence = 0.75 if valency_role else 0.5
             role_rows.append({
                 'entity_id': entity_id,
                 'name': name,
                 'role': role.lower(),
                 'token_range': [start + offset, start + offset],
-                'confidence': round(token_role.confidence, 2),
+                'confidence': evidence_confidence,
                 'source': 'verb_frame' if valency_role else token_role.source,
             })
         if role_rows:
@@ -1861,8 +1780,14 @@ def build_scene_role_grid(results: list, text_segments: list, dialogue_turns: li
         })
         total = entity_totals.setdefault(entity_id, {
             'entity_id': entity_id, 'canonical_name': name,
+            'canonical_confidence': confidence, 'canonical_index': token_index,
             'mentions': 0, 'global_roles': set(),
         })
+        if (confidence > total['canonical_confidence'] or
+                (confidence == total['canonical_confidence'] and token_index < total['canonical_index'])):
+            total['canonical_name'] = name
+            total['canonical_confidence'] = confidence
+            total['canonical_index'] = token_index
         total['mentions'] += 1
         total['global_roles'].add(role)
 
@@ -1902,8 +1827,9 @@ def build_scene_role_grid(results: list, text_segments: list, dialogue_turns: li
         start = turn.get('start_token', 0)
         scene_id = scene_for(start)
         name = turn.get('speaker', '')
-        observe(scene_id, entity_id, name, 'speaker', start, 0.90, 'dialogue_turn')
-        observe(scene_id, entity_id, name, 'present', start, 0.90, 'dialogue_turn')
+        turn_confidence = max(0.0, min(1.0, turn.get('confidence', 1.0)))
+        observe(scene_id, entity_id, name, 'speaker', start, turn_confidence, 'dialogue_turn')
+        observe(scene_id, entity_id, name, 'present', start, turn_confidence, 'dialogue_turn')
 
     scenes = []
     for scene_id, start, end in ranges:
@@ -2028,6 +1954,19 @@ async def entropy_map(req: TensionMapRequest):
             res = ner.classify_candidate(t)
             
             if res['type'] in ["person", "unknown_capitalized"]:
+                # Function words must never enter the entity registry, even
+                # when capitalization is supplied by a line break.
+                try:
+                    candidate_parses = inflector_analyze(t)
+                    if candidate_parses and all(
+                        getattr(parse, 'pos', '') in {'PREP', 'CONJ', 'PRCL', 'INTJ', 'PART', 'SCONJ'}
+                        for parse in candidate_parses
+                    ):
+                        i += 1
+                        continue
+                except Exception:
+                    pass
+
                 l1, gen = kb.get_best_lemma(t)
                 parts = [t]; lemmas = [l1]; ni = i + 1
                 while ni < len(tokens):
@@ -2053,11 +1992,11 @@ async def entropy_map(req: TensionMapRequest):
                 if id_key not in identities or len(full_canonical) > len(identities[id_key]['canonical']):
                     identities[id_key] = {"canonical": full_canonical, "gender": gen, "role": social_role}
                 
-                for idx in range(i, ni): 
+                for idx in range(i, ni):
                     resolved_entities.append({
-                        "idx": idx, "type": "person", "role": role, 
+                        "idx": idx, "type": "person", "role": role,
                         "social": social_role,
-                        "confidence": 1.0 if role=="speaker" else res['confidence'], 
+                        "confidence": max(0.0, min(1.0, res['confidence'])),
                         "canonical": full_canonical
                     })
                 i = ni - 1
@@ -2425,6 +2364,24 @@ async def entropy_map(req: TensionMapRequest):
             from engine.language.inflector import _cached_reverse_lookup
             canonical_title = surface.title() if surface.isupper() else surface
             surface_lower = canonical_title.lower()
+            # Canonical KG identity wins for inflected or aliased mentions.
+            try:
+                from engine.kg.entity_resolution import (
+                    get_canonical_entity as _get_canonical_entity,
+                    resolve_entity as _resolve_kg_entity,
+                )
+                resolved_id = _resolve_kg_entity(canonical_title)
+                if resolved_id:
+                    canonical_entity = _get_canonical_entity(resolved_id)
+                    canonical_name = (
+                        canonical_entity.canonical_name
+                        if canonical_entity is not None
+                        else resolved_id.replace('_', ' ').title()
+                    )
+                    return canonical_name, resolved_id
+            except Exception:
+                pass
+
 
             # Step 1: find the nominative form that matches surface gender.
             # The paradigm stores all forms; we look for nomn+sing of the
@@ -2657,12 +2614,12 @@ async def entropy_map(req: TensionMapRequest):
                     r['turn_addressees'] = list(turn_addressees[tid])
                 if tid in turn_speech_acts:
                     r['speech_acts'] = turn_speech_acts[tid]  # dict {act: confidence}
-                # Normalize speaker name via entity registry
+                # Speaker identity is distinct from each mentioned entity.
                 spk = r.get('speaker', '')
-                canon, eid = resolve_entity(spk)
-                if eid:
-                    r['speaker'] = canon  # normalize speaker name
-                    r['entity_id'] = eid
+                canon, speaker_eid = resolve_entity(spk)
+                if speaker_eid:
+                    r['speaker'] = canon
+                    r['speaker_entity_id'] = speaker_eid
             
             # Entity/Role assignment (F.88-90) + entity_id
             lt = r.get('line_type', '')
@@ -2676,11 +2633,17 @@ async def entropy_map(req: TensionMapRequest):
                 canon, eid = resolve_entity(r['word'])
                 if eid:
                     r['entity_id'] = eid
-            elif lt == 'TEXT' and r.get('is_entity') and r.get('confidence', 0) >= 0.6:
-                r['entity_role'] = 'mentioned'
-                canon, eid = resolve_entity(r['word'])
-                if eid:
-                    r['entity_id'] = eid
+            elif lt == 'TEXT' and r.get('is_entity'):
+                parses = inflector_analyze(r['word'])
+                proper_name = any(
+                    {'Name', 'Surn', 'Patr'} & set(getattr(parse, 'grammemes', ()))
+                    for parse in parses
+                )
+                if r.get('confidence', 0) >= 0.6 or proper_name:
+                    r['entity_role'] = 'mentioned'
+                    canon, eid = resolve_entity(r['word'])
+                    if eid:
+                        r['entity_id'] = eid
         
         # --- Turn-pair linking ---
         # Link question turns to their answers: turn N (?) → turn N+1
@@ -2697,6 +2660,7 @@ async def entropy_map(req: TensionMapRequest):
                     'start_tok': i,
                     'end_tok': i,
                     'speech_acts': r.get('speech_acts', {}),
+                    'speaker_confidence': r.get('speaker_confidence', 0.0),
                 }
             else:
                 turn_info[tid]['end_tok'] = i
@@ -2809,6 +2773,7 @@ async def entropy_map(req: TensionMapRequest):
                 'speaker': ti['speaker'],
                 'start_token': ti['start_tok'],
                 'end_token': ti['end_tok'],
+                'confidence': max(0.0, min(1.0, ti['speaker_confidence'])),
                 'text': ' '.join(text_words),
                 'speech_acts': ti['speech_acts'],
             }

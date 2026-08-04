@@ -57,14 +57,6 @@ class Turn:
 
 # ── Регулярные выражения ──────────────────────────────────────
 
-_ATTR_VERBS = re.compile(
-    r"\b(сказал[аи]?|говорил[аи]?|ответил[аи]?|спросил[аи]?|"
-    r"воскликнул[аи]?|прошептал[аи]?|крикнул[аи]?|произнёс|произнесла|"
-    r"добавил[аи]?|заметил[аи]?|перебил[аи]?|пробормотал[аи]?|"
-    r"усмехнул(?:ся|ась)|вздохнул[аи]?|продолжал[аи]?|подумал[аи]?|"
-    r"процедил[аи]?|буркнул[аи]?)\b",
-    re.IGNORECASE,
-)
 
 _STAGE_VERBS = re.compile(
     r"\b(уходит|уходят|входит|входят|садится|садятся|встаёт|встают|"
@@ -77,10 +69,6 @@ _STAGE_VERBS = re.compile(
 
 _EM_DASH_START = re.compile(r"^[—–-]\s*")
 
-_NOT_NAMES = frozenset({
-    "Боже", "Господи", "Нет", "Да", "Ах", "Так",
-    "Вот", "Всё", "Там", "Тут", "Ведь", "Уже",
-})
 
 
 # ── Детекция формата ─────────────────────────────────────────
@@ -230,11 +218,28 @@ def _is_stage_direction(line: str,
 
 
 def _extract_speaker(text: str) -> Optional[str]:
-    """Извлекает имя из слов автора: 'ответила Маша' → 'Маша'."""
-    m = re.search(r"\b([А-ЯЁ][а-яё]{2,})\b", text)
-    if m and m.group(1) not in _NOT_NAMES:
-        return m.group(1)
-    return None
+    """Resolve an adjacent nominative proper name through morphology."""
+    try:
+        from engine.language.inflector import analyze
+    except Exception:
+        return None
+    candidates = []
+    for match in re.finditer(r"[^\W\d_]+", text, re.UNICODE):
+        word = match.group()
+        if not word[:1].isupper():
+            continue
+        try:
+            parses = analyze(word)
+        except Exception:
+            continue
+        if any(
+            parse.pos == "NOUN"
+            and parse.case == "nomn"
+            and ({"Name", "Surn", "Patr"} & set(parse.grammemes))
+            for parse in parses
+        ):
+            candidates.append(word)
+    return candidates[-1] if candidates else None
 
 
 # ── Классификаторы по формату ────────────────────────────────
@@ -271,7 +276,7 @@ def classify_prose_em_line(line: str) -> ParsedLine:
 
         # Ищем разрыв: «текст, — сказал он»
         split1 = re.split(r"[,!?]\s*[—–]\s*", content, maxsplit=1)
-        if len(split1) == 2 and _ATTR_VERBS.search(split1[1]):
+        if len(split1) == 2:
             speech_a   = split1[0].strip()
             author_etc = split1[1]
             split2     = re.split(r"[.,]\s*[—–]\s*", author_etc, maxsplit=1)
@@ -279,9 +284,7 @@ def classify_prose_em_line(line: str) -> ParsedLine:
             cont       = split2[1].strip() if len(split2) > 1 else ""
             speech     = (speech_a + (" " + cont if cont else "")).strip()
             return ParsedLine(raw=line, line_type=LineType.SPEECH,
-                              text=speech,
-                              speaker=_extract_speaker(author_txt)
-                              if _ATTR_VERBS.search(author_txt) else None)
+                              text=speech, speaker=_extract_speaker(author_txt))
 
         return ParsedLine(raw=line, line_type=LineType.SPEECH, text=content)
 
@@ -300,7 +303,7 @@ def classify_prose_q_line(line: str) -> ParsedLine:
     if m:
         speech  = m.group(1).strip()
         rest    = m.group(2).strip()
-        speaker = _extract_speaker(rest) if _ATTR_VERBS.search(rest) else None
+        speaker = _extract_speaker(rest)
         return ParsedLine(raw=line, line_type=LineType.SPEECH,
                           text=speech, speaker=speaker)
 
