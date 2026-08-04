@@ -26,13 +26,13 @@ Ensure you have FastAPI and Uvicorn installed:
 pip install fastapi uvicorn pydantic
 ```
 
-Run the local server:
+Run the local server (listens on port 8001, see the bottom of `app.py`):
 
 ```bash
-python3 app.py
+PYTHONPATH=/Users/alex/logos python3 app.py
 ```
 
 Open your browser and navigate to:
-```
-http://127.0.0.1:8000
-```
+
+- morphology demo (feminitives, inflection, morphemes) — <http://127.0.0.1:8001/>
+- Logos Spectrum, the narrative text editor with timeline tracks — <http://127.0.0.1:8001/tension.html>

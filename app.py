@@ -3043,6 +3043,26 @@ class NoCacheMiddleware(BaseHTTPMiddleware):
 app.add_middleware(NoCacheMiddleware)
 app.mount("/", StaticFiles(directory=str(STATIC_DIR), html=True), name="static")
 
+
+@app.on_event("startup")
+async def _warm_analysis_pipeline() -> None:
+    """Pay one-time lazy-init cost at boot, not on the first user request.
+
+    tension.html analyses immediately on page load, so without this the first
+    visitor after a restart waits on inflector load, GrammarSTDP prep training
+    and MorphIR imports (~2.8s measured) before seeing any timeline. Runs
+    detached: a warmup failure costs nothing but the warmup.
+    """
+    import asyncio
+
+    async def _warm() -> None:
+        try:
+            await entropy_map(TensionMapRequest(text="Иван вошёл в комнату у окна."))
+        except Exception:
+            print("warmup skipped:\n" + traceback.format_exc())
+
+    asyncio.get_running_loop().create_task(_warm())
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="127.0.0.1", port=8001)

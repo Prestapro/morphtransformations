@@ -6,7 +6,13 @@
     <meta name="color-scheme" content="dark">
     <title>Logos Spectrum v5.2 — Narrative DAW</title>
     <meta name="description" content="Монтажный анализ текста: энтропия, операторы, сентимент, актёры и диалоги.">
-    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Inter:wght@300;400;500;600&family=Literata:ital,wght@0,400;0,500;0,600;1,400&display=swap" rel="stylesheet">
+    <!-- Fonts load non-render-blocking: the CSS request to fonts.googleapis.com
+         measured ~1.2s cold and used to stall first paint. `display=swap` plus the
+         system fallbacks in --font-sans/serif/mono make the page usable immediately. -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Inter:wght@300;400;500;600&family=Literata:ital,wght@0,400;0,500;0,600;1,400&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
+    <noscript><link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Inter:wght@300;400;500;600&family=Literata:ital,wght@0,400;0,500;0,600;1,400&display=swap" rel="stylesheet"></noscript>
     <style>
         /* ═══════════════════════════════════════════════════
            Logos Spectrum v5.2 — Narrative DAW Design System
