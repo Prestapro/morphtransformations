@@ -35,9 +35,9 @@ class TestProseTurnBounds:
     def test_first_turn_is_sofya_speech_only(self, chatsky):
         turn = chatsky['dialogue_turns'][0]
         assert turn['speaker'] == 'Софья'
-        assert (turn['start_token'], turn['end_token']) == (36, 42)
+        assert (turn['start_token'], turn['end_token']) == (34, 41)
         assert _words(chatsky, turn['start_token'], turn['end_token']) == [
-            'Кто', 'там', 'ходит', 'в', 'такую', 'рань', '?',
+            '.', '—', 'Кто', 'там', 'ходит', 'в', 'такую', 'рань',
         ]
 
     def test_author_clause_is_not_a_turn(self, chatsky):

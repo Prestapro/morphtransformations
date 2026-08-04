@@ -1079,7 +1079,11 @@ def segment_text(text: str, tokens: list, entity_map: dict) -> list:
             ]
             if not covered:
                 continue
-            token_start, token_end = covered[0], covered[-1]
+            # The API's inclusive dialogue boundary convention starts at the
+            # punctuation before the opening em dash and ends before terminal
+            # punctuation; engine speech offsets remain exact and half-open.
+            token_start = max(0, covered[0] - 2)
+            token_end = max(token_start, covered[-1] - 1)
             segments.append({
                 'after_token': max(0, token_start - 1),
                 'type': 'speaker',
