@@ -1201,6 +1201,11 @@
     let workAuthor = '';
     const LARGE_DOCUMENT_TOKEN_LIMIT = 8000; // Keep full text interaction within browser rendering limits.
     let largeDocument = false;
+    // One timeline cell per track per clip: a full book otherwise emits >14k
+    // cells and blocks the main thread for minutes, so the diagram looks stuck.
+    const MAX_TIMELINE_CLIPS = 400;
+    let analysisStatus = 'success';
+    let partialFeatures = [];
 
     const SAMPLE = `Утро в доме Фамусова начиналось тихо. Софья сидела у окна и смотрела на пустую улицу, где медленно таял ночной туман. Однако тишина была обманчива: в передней уже слышались быстрые шаги.
 
@@ -1309,20 +1314,42 @@
     function buildClips() {
         clips = [];
         if (!data.length) return;
+        // Sentence terminators define clip boundaries. Group them for long
+        // documents so the rendered cell count stays within budget.
+        let sentenceCount = 0;
+        data.forEach((t, i) => {
+            if (/[.!?…]/.test(t.word) && i < data.length - 1
+                && !/^[)\]}>»"']$/.test(data[i + 1].word)) sentenceCount++;
+        });
+        const sentencesPerClip = Math.max(1, Math.ceil(sentenceCount / MAX_TIMELINE_CLIPS));
+        let pending = 0;
+        let sentenceIndex = 0;
         let clip = newClip(0);
+        clip.rhythmStart = sentenceIndex;
         data.forEach((t, i) => {
             clip.tokens.push({ ...t, _i: i });
             if (/[.!?…]/.test(t.word) && i < data.length - 1) {
                 // Don't split if next token is closing punct (avoids orphaned ) on new line)
                 const next = data[i + 1];
                 if (!/^[)\]}>»"']$/.test(next.word)) {
+                    sentenceIndex++;
+                    pending++;
+                }
+                if (!/^[)\]}>»"']$/.test(next.word) && pending >= sentencesPerClip) {
+                    pending = 0;
+                    clip.rhythmEnd = sentenceIndex;
                     finalizeClip(clip);
                     clips.push(clip);
                     clip = newClip(clips.length);
+                    clip.rhythmStart = sentenceIndex;
                 }
             }
         });
-        if (clip.tokens.length) { finalizeClip(clip); clips.push(clip); }
+        if (clip.tokens.length) {
+            clip.rhythmEnd = rhythm.length || sentenceIndex + 1;
+            finalizeClip(clip);
+            clips.push(clip);
+        }
 
         // Actors — combine entity detection + speaker metadata
         const counts = {};
@@ -1379,6 +1406,7 @@
         c.wordCount = words;
         c.avgEntropy = words ? eSum / words : 0;
         c.maxEntropy = maxE;
+
         c.sentiment = sHits ? sSum / Math.max(sHits, 2) : 0;
         c.avgValence = valHits ? valSum / valHits : 0;
         c.avgArousal = aroHits ? aroSum / aroHits : 0;
@@ -1393,6 +1421,35 @@
         if (!c.startsNewParagraph) {
             c.startsNewParagraph = c.tokens.some(t => t._gap && /\n\n/.test(t._gap));
         }
+    }
+    // Quick-mode responses intentionally omit the expensive SRL plot pass.
+    // Preserve an honest, bounded visual overview from the entropy signal that
+    // is already present in every clip; this is explicitly marked approximate.
+    function buildQuickPlotArc() {
+        if (!clips.length) return null;
+        const tensions = clips.map(clip => clip.avgEntropy || 0);
+        const peak = tensions.reduce((best, value, index) =>
+            value > tensions[best] ? index : best, 0);
+        const peakRadius = Math.max(1, Math.ceil(clips.length * 0.03));
+        const stages = tensions.map((_, index) => {
+            const progress = index / Math.max(clips.length - 1, 1);
+            if (Math.abs(index - peak) <= peakRadius) return 'climax';
+            if (progress <= 0.15) return 'exposition';
+            if (progress >= 0.85) return 'denouement';
+            return index < peak ? 'rising_action' : 'falling_action';
+        });
+        return {
+            approximate: true,
+            tensions,
+            stages,
+            diagnostics: [],
+            beauty_score: 0,
+            surprise: '—',
+            inevitability: '—',
+            causality: '—',
+            arc_closure: '—',
+            n_events: 0,
+        };
     }
 
     // ── Apply server-side structural segments to clips ──
@@ -1475,6 +1532,8 @@
 
     function applyAnalysis(text, json) {
         originalText = text;
+        analysisStatus = json.status || 'success';
+        partialFeatures = (json.meta && json.meta.partial_features) || [];
         if (json.data) {
             data = json.data;
             largeDocument = data.length > LARGE_DOCUMENT_TOKEN_LIMIT;
@@ -1492,6 +1551,9 @@
             enrichPunctuationOps();
             mapTokenPositions();
             buildClips();
+            if (!plotArc && analysisStatus === 'partial' && partialFeatures.includes('plot_arc')) {
+                plotArc = buildQuickPlotArc();
+            }
             applyServerSegments();
             selectedClip = clips.length - 1;
             render();
@@ -1508,7 +1570,9 @@
         try {
             const cached = await readCachedAnalysis(analysisCacheKey(text));
             if (cached && cached.data) {
+                if (controller.signal.aborted) return;
                 applyAnalysis(text, cached);
+                document.body.classList.remove('loading');
                 return;
             }
         } catch (error) {
@@ -1530,7 +1594,9 @@
                 applyAnalysis(text, json);
             }
         } catch (e) { console.error(e); }
-        finally { document.body.classList.remove('loading'); }
+        finally {
+            if (controller === activeAnalysisController) document.body.classList.remove('loading');
+        }
     }
 
 
@@ -1667,7 +1733,12 @@
         if (!clips.length) { el.textContent = ''; return; }
         const words = data.filter(t => t.word[0] && t.word[0].match(/[а-яА-Яa-zA-Z0-9]/)).length;
         const genreLabel = genre === 'verse_drama' ? ' · драма' : genre === 'poetry' ? ' · стихи' : '';
-        el.textContent = `${clips.length} клипов · ${words} слов${genreLabel}`;
+        // A partial result must never look like a full analysis: above the
+        // server's quick-mode threshold plot, segmentation and roles are skipped.
+        const partialLabel = analysisStatus === 'partial'
+            ? ` · частичный разбор, пропущено: ${partialFeatures.join(', ')}`
+            : '';
+        el.textContent = `${clips.length} клипов · ${words} слов${genreLabel}${partialLabel}`;
     }
 
     // ── Text Pane ──
@@ -2145,14 +2216,15 @@
                         `<span class="arc-legend-item"><span class="arc-legend-dot" style="background:${stageColors[s]}"></span>${stageNames[s]||s}</span>`
                     ).join('') + '</div>';
                     return `
-                        <div class="insp-section-title">Сюжетная арка</div>
+                        <div class="insp-section-title">Сюжетная арка${a.approximate ? ' · обзор по энтропии' : ''}</div>
+                        ${a.approximate ? '<div class="insp-row"><span class="insp-label">Режим</span><span class="insp-value">приближённый</span></div>' : `
                         <div class="insp-row"><span class="insp-label">B (красота)</span><span class="beauty-score" style="color:${bColor}">${a.beauty_score.toFixed(3)}</span></div>
                         <div class="beauty-bar"><div class="beauty-fill" style="width:${a.beauty_score*100}%;background:${bColor}"></div></div>
                         <div class="insp-row"><span class="insp-label">Неожиданность S</span><span class="insp-value">${a.surprise}</span></div>
                         <div class="insp-row"><span class="insp-label">Неизбежность I</span><span class="insp-value">${a.inevitability}</span></div>
                         <div class="insp-row"><span class="insp-label">Каузальность K</span><span class="insp-value">${a.causality}</span></div>
                         <div class="insp-row"><span class="insp-label">Арки закрыты A</span><span class="insp-value" style="color:${a.arc_closure < 1 ? 'var(--signal-high)' : 'var(--signal-low)'}">${a.arc_closure}</span></div>
-                        <div class="insp-row"><span class="insp-label">Событий (SRL)</span><span class="insp-value">${a.n_events}</span></div>
+                        <div class="insp-row"><span class="insp-label">Событий (SRL)</span><span class="insp-value">${a.n_events}</span></div>`}
                         ${legendHtml}
                         ${diagHtml}
                     `;
@@ -2182,6 +2254,11 @@
         const cellW = Math.max(32, Math.min(80, 6 * Math.max(...clips.map(c => c.wordCount), 4)));
 
         function cw(clip) { return Math.max(32, Math.min(120, clip.wordCount * 6)); }
+        const rhythmByClip = clips.map(clip => {
+            const values = rhythm.slice(clip.rhythmStart, clip.rhythmEnd);
+            return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : 0;
+        });
+        const maxRhythm = Math.max(...rhythmByClip, 1);
 
         // Track definitions
         const tracks = [];
@@ -2334,14 +2411,12 @@
                         break;
                     }
                     case 'rhythm': {
-                        // Map clip index to rhythm entry (sentence lengths)
-                        const rIdx = clip.index;
-                        if (rIdx < rhythm.length) {
-                            const maxR = Math.max(...rhythm, 1);
-                            const rVal = rhythm[rIdx];
-                            const pct = Math.max(8, Math.min(95, (rVal / maxR) * 90));
-                            const hue = 60 + (1 - rVal/maxR) * 40; // short=warm, long=orange
-                            html += `<div style="position:absolute;bottom:2px;left:2px;right:2px;height:${pct}%;background:oklch(0.72 0.14 ${hue} / 75%);border-radius:2px 2px 0 0;" title="${rVal} слов"></div>`;
+                        const rVal = rhythmByClip[clip.index] || 0;
+                        if (rVal > 0) {
+                            const pct = Math.max(8, Math.min(95, (rVal / maxRhythm) * 90));
+                            const hue = 60 + (1 - rVal / maxRhythm) * 40; // short=warm, long=orange
+                            const sentenceCount = Math.max(1, clip.rhythmEnd - clip.rhythmStart);
+                            html += `<div style="position:absolute;bottom:2px;left:2px;right:2px;height:${pct}%;background:oklch(0.72 0.14 ${hue} / 75%);border-radius:2px 2px 0 0;" title="${rVal.toFixed(1)} слов/предл. · ${sentenceCount} предл."></div>`;
                         }
                         break;
                     }
