@@ -228,6 +228,31 @@ class SentimentEngine:
             return {'val': round(5.0 + s * 2.5, 2), 'aro': 0, 'conc': 0}
         return {'val': 0, 'aro': 0, 'conc': 0}
 
+def _person_candidate(token: str) -> bool:
+    """Return whether morphology supplies positive person evidence."""
+    try:
+        parses = tuple(inflector_analyze(token))
+    except Exception:
+        return True
+
+    known_parses = tuple(
+        parse for parse in parses
+        if getattr(parse, 'is_known', True) and getattr(parse, 'pos', '') != 'UNKN'
+    )
+    if not known_parses:
+        return True
+    if any(
+        {'Name', 'Surn', 'Patr'} & set(getattr(parse, 'grammemes', ()))
+        for parse in known_parses
+    ):
+        return True
+    return all(
+        getattr(parse, 'pos', '') == 'NOUN'
+        and getattr(parse, 'animacy', None) == 'anim'
+        for parse in known_parses
+    )
+
+
 # --- NER Engine ---
 class NEREngine:
     def __init__(self, kb: KnowledgeBase):
@@ -256,7 +281,11 @@ class NEREngine:
             if any(x in g for x in ['Name', 'Surn', 'Patr']): confidence += 0.8; is_animate = True; etype = "person"
             if 'anim' in g: is_animate = True; confidence += 0.15
             if 'Geox' in g: etype = "place"; confidence += 0.2
-        if etype == "person" and is_animate: confidence = max(confidence, 0.85)
+        if etype == "person" and is_animate:
+            confidence = max(confidence, 0.85)
+        elif etype == "unknown" and is_animate and _person_candidate(token):
+            etype = "person"
+            confidence = max(confidence, 0.6)
         return {"type": etype, "confidence": min(1.0, confidence)}
 
 # --- API ---
@@ -1958,18 +1987,9 @@ async def entropy_map(req: TensionMapRequest):
             res = ner.classify_candidate(t)
             
             if res['type'] in ["person", "unknown_capitalized"]:
-                # Function words must never enter the entity registry, even
-                # when capitalization is supplied by a line break.
-                try:
-                    candidate_parses = inflector_analyze(t)
-                    if candidate_parses and all(
-                        getattr(parse, 'pos', '') in {'PREP', 'CONJ', 'PRCL', 'INTJ', 'PART', 'SCONJ'}
-                        for parse in candidate_parses
-                    ):
-                        i += 1
-                        continue
-                except Exception:
-                    pass
+                if not _person_candidate(t):
+                    i += 1
+                    continue
 
                 l1, gen = kb.get_best_lemma(t)
                 parts = [t]; lemmas = [l1]; ni = i + 1
@@ -2008,7 +2028,12 @@ async def entropy_map(req: TensionMapRequest):
 
         entity_map = {e['idx']: e for e in resolved_entities}
         for i, t in enumerate(tokens):
-            if i not in entity_map and t.lower() in identities:
+            if (
+                i not in entity_map
+                and t[:1].isupper()
+                and t.lower() in identities
+                and _person_candidate(t)
+            ):
                 id_info = identities[t.lower()]
                 entity_map[i] = {
                     "idx": i, "type": "person", "role": "mention", 
