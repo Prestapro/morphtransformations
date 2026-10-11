@@ -430,6 +430,78 @@ def _find_last_entity_by_gender(results, current_idx, target_gender, known_speak
     return None
 
 
+def _joint_pronoun_readings(results):
+    """Joint pronoun readings (anaphora_resolver.resolve_readings) mapped to result indices.
+
+    Spec: docs/research/text_as_math_20261011/lean/PackedReadings.lean (2026-10-12).
+    All admissible referents are kept; a referent is confirmed only when it is the
+    single value in every surviving joint reading. Non-TEXT lines end a sentence.
+    Returns ({result_index: readings dict}, text facts with display names).
+    """
+    from engine.ingestion.anaphora_candidates import _TOKEN_RE, generate_candidates
+    from engine.ingestion.anaphora_resolver import resolve_readings
+
+    parts, word_idx = [], []
+    for i, r in enumerate(results):
+        if r.get('line_type') not in (None, 'TEXT'):
+            parts.append('.')
+            continue
+        w = r.get('word', '')
+        if not _TOKEN_RE.fullmatch(w):
+            continue
+        parts.append(w)
+        if w[:1].isalpha():
+            word_idx.append(i)
+    text = ' '.join(parts)
+    cs = generate_candidates(text)
+    jr = resolve_readings(text, cs)
+    by_id = {ref.id: ref for ref in cs.referents}
+    bearers = {}
+    for ref in cs.referents:
+        if ref.kind == 'individual':
+            bearers[ref.label] = bearers.get(ref.label, 0) + 1
+
+    def _display(rid):
+        ref = by_id.get(rid)
+        if ref is None:
+            return rid                              # GENERIC_YOU, TEXT_SPEAKER
+        if ref.kind == 'group':
+            return '+'.join(_display(m) for m in ref.members)
+        lemma = cs.tokens[ref.mentions[0]].parse.lemma if ref.mentions else ref.label
+        name = lemma[:1].upper() + lemma[1:]          # keeps ё (Пётр), label does not
+        return f"{name}#{rid.rsplit('#', 1)[-1]}" if bearers.get(ref.label, 0) > 1 else name
+
+    first_surface = {rid: _display(rid) for rid in by_id}
+    out = {}
+    for p in jr.pronouns:
+        if p.position >= len(word_idx):
+            continue
+        display = [first_surface.get(v, v) for v in p.values]
+        out[word_idx[p.position]] = {
+            'status': p.status,
+            'kind': p.kind,
+            'values': p.values,
+            'display': display,
+            'ranking': [[first_surface.get(v, v), layer] for v, layer in p.ranking],
+            'removed': [[first_surface.get(v, v), layer] for v, layer in p.removed],
+            'only_if_different_times': [first_surface.get(v, v) for v in p.conditional],
+            'contradiction_if_negation_covers_anchor': [first_surface.get(v, v)
+                                                        for v in p.contradiction_if_whole],
+            'assumptions': jr.assumptions,
+        }
+    facts = {
+        'status': jr.status,
+        'status_if_negations_cover_anchor': jr.status_if_negations_cover_anchor,
+        'facts': [{'predicate': f['predicate'],
+                   'referent': first_surface.get(f['referent'], f['referent']),
+                   'tense': f['tense'], 'anchor': f['anchor'], 'clause': f['clause'],
+                   'status': f['status'],
+                   'status_if_negations_cover_anchor': f['status_if_negations_cover_anchor']}
+                  for f in jr.facts],
+    }
+    return out, facts
+
+
 # --- Text Depth Metrics ---
 def compute_depth_metrics(tokens_data: list, window_size: int = 15) -> dict:
     """Compute text depth metrics across 3 axes + coherence.
@@ -1441,6 +1513,9 @@ def segment_text(text: str, tokens: list, entity_map: dict) -> list:
     return deduped, speaker_map, line_type_map, line_type_conf_map, morph_boundary_signals, kl_boundary_signals, boundary_evidence
 
 
+_SPEAKER_CONFIRM_MIN = 0.8
+
+
 def build_text_knowledge_graph(
     results: list,
     scenes: list,
@@ -1495,11 +1570,16 @@ def build_text_knowledge_graph(
         )
         if eid:
             entity_node = tkg.get_or_create_entity(eid, turn.get('speaker', ''))
+            # Уверенность переносится из входа; 0.95 — только для структурной метки без поля confidence.
+            # Ниже порога подтверждения — UNKNOWN (раньше 0.20 становилось confirmed/0.95).
+            conf = float(turn['confidence']) if turn.get('confidence') is not None else 0.95
+            status = (KnowledgeStatus.CONFIRMED if conf >= _SPEAKER_CONFIRM_MIN
+                      else KnowledgeStatus.UNKNOWN)
             tkg.add_edge(
                 entity_node.node_id, turn_node.node_id, EdgeType.SPEAKER_OF,
                 [Evidence('dialogue_turn', [turn.get('start_token', 0),
-                                            turn.get('end_token', 0)], 0.95)],
-                knowledge_status=KnowledgeStatus.CONFIRMED,
+                                            turn.get('end_token', 0)], conf)],
+                knowledge_status=status,
             )
         # Addressees from vocative detection
         for addressee_name in turn.get('addressees', []):
@@ -1526,13 +1606,19 @@ def build_text_knowledge_graph(
             'recipient':   EdgeType.RECIPIENT_OF,
             'beneficiary': EdgeType.BENEFICIARY_OF,
             'stimulus':    EdgeType.STIMULUS_OF,
+            'location':    EdgeType.LOCATION_OF,
+            'direction':   EdgeType.DIRECTION_OF,
+            'source':      EdgeType.SOURCE_OF,
         }
         for role_rec in event.get('roles', []):
             eid = role_rec.get('entity_id', '')
             if not eid:
                 continue
             entity_node = tkg.get_or_create_entity(eid, role_rec.get('name', ''))
-            etype = _ROLE_TO_EDGE.get(role_rec['role'], EdgeType.AGENT_OF)
+            # Неизвестная роль не превращается в AGENT_OF (раньше это был default), ребро не создаём
+            etype = _ROLE_TO_EDGE.get(role_rec['role'])
+            if etype is None:
+                continue
             tkg.add_edge(
                 entity_node.node_id, event_node.node_id, etype,
                 [Evidence(
@@ -1604,31 +1690,49 @@ def compute_reference_stability(results: list) -> dict:
     """
     pronoun_types = set(lex.pronouns_2per) | set(lex.pronouns_3masc) | set(lex.pronouns_3fem)
     references = []
+    ambiguous = []
     unresolved = []
+    mention_choices = []
     for index, token in enumerate(results):
         word = token.get('word', '').lower()
-        if word not in pronoun_types:
+        rd_kind = (token.get('pronoun_readings') or {}).get('kind')
+        if rd_kind in ('name', 'one_of'):
+            rd = token['pronoun_readings']
+            mention_choices.append({'token_range': [index, index], 'mention': token['word'],
+                                    'kind': rd_kind, 'status': rd['status'],
+                                    'candidates': rd.get('display', [])})
+            continue
+        if word not in pronoun_types and rd_kind is None:
             continue
         record = {
             'token_range': [index, index],
             'pronoun': token['word'],
             'turn_id': token.get('turn_id'),
         }
+        rd = token.get('pronoun_readings')
         if token.get('pronoun_ref'):
             record['referent'] = token['pronoun_ref']
             record['resolution_type'] = token.get('pronoun_type', 'resolved')
             references.append(record)
+        elif rd and rd.get('status') == 'ambiguous':
+            record['candidates'] = rd.get('display', [])
+            record['ranking'] = rd.get('ranking', [])
+            record['reason'] = 'ambiguous_readings_kept'
+            ambiguous.append(record)
         else:
-            record['reason'] = 'no_confirmed_referent'
+            record['reason'] = (rd or {}).get('status') or 'no_confirmed_referent'
             unresolved.append(record)
-    total = len(references) + len(unresolved)
+    total = len(references) + len(ambiguous) + len(unresolved)
     return {
         'total_pronouns': total,
         'resolved_count': len(references),
+        'ambiguous_count': len(ambiguous),
         'unresolved_count': len(unresolved),
         'stability': round(len(references) / total, 3) if total else 1.0,
         'resolved': references,
+        'ambiguous': ambiguous,
         'unresolved': unresolved,
+        'mention_choices': mention_choices,
     }
 
 
@@ -1888,7 +1992,7 @@ def build_scene_role_grid(results: list, text_segments: list, dialogue_turns: li
             grid.append({
                 'scene_id': scene_id, 'entity_id': entity_id,
                 'scene_status': ('confirmed' if participant and ('speaker' in participant['roles'] or 'present' in participant['roles'])
-                                 else 'unknown' if participant else 'rejected'),
+                                 else 'unknown' if participant else 'not_mentioned'),
                 'roles': sorted(participant['roles']) if participant else [],
             })
 
@@ -1931,6 +2035,7 @@ def build_scene_role_grid(results: list, text_segments: list, dialogue_turns: li
 async def entropy_map(req: TensionMapRequest):
     request_id = uuid.uuid4().hex
     started_at = time.perf_counter()
+    text_facts = {'status': 'not_computed', 'facts': []}   # anaphora_resolver facts layer
     timings_ms = {}
     if len(req.text) > MAX_INPUT_CHARS:
         raise HTTPException(
@@ -2760,6 +2865,16 @@ async def entropy_map(req: TensionMapRequest):
                 for addr in addrs:
                     speaker_last_addressee[spk] = addr
         
+        # Joint readings for 3rd-person pronouns, name choices and «один» (2026-10-12).
+        try:
+            joint_readings, text_facts = _joint_pronoun_readings(results)
+            joint_error = None
+        except Exception as exc:  # Spectrum must still run; the error is reported
+            joint_readings, joint_error = {}, f'{type(exc).__name__}: {exc}'
+            text_facts = {'status': 'error', 'error': joint_error, 'facts': []}
+        for idx, rd in joint_readings.items():
+            results[idx]['pronoun_readings'] = rd
+
         # Inject resolved pronouns
         for i, r in enumerate(results):
             if r.get('line_type') != 'TEXT':
@@ -2772,7 +2887,14 @@ async def entropy_map(req: TensionMapRequest):
                     r['pronoun_ref'] = resolved
                     r['pronoun_type'] = '2per'
             
-            # 3rd person pronouns → last mentioned entity of matching gender
+            # 3rd person pronouns: confirmed only if the joint readings leave one referent
+            elif (word_lower in lex.pronouns_3masc or word_lower in lex.pronouns_3fem) \
+                    and joint_error is None:
+                rd = r.get('pronoun_readings')
+                if rd and rd['status'] == 'determinate':
+                    r['pronoun_ref'] = rd['display'][0]
+                    r['pronoun_type'] = 'joint_readings'
+            # fallback only if the joint resolver failed: last entity of matching gender
             elif word_lower in lex.pronouns_3masc:
                 # Find last mentioned masc entity before this position
                 ref = _find_last_entity_by_gender(results, i, 'masc', known_speaker_names, spk)
@@ -2785,6 +2907,16 @@ async def entropy_map(req: TensionMapRequest):
                     r['pronoun_ref'] = ref
                     r['pronoun_type'] = '3per_fem'
         
+        if joint_error is None:
+            for r in results:
+                rd = r.get('pronoun_readings')
+                if not rd or r.get('pronoun_ref') or r['word'].lower() in lex.pronouns_2per:
+                    continue
+                if rd['status'] == 'determinate' and rd['kind'] in (
+                        'personal', 'possessive', 'reflexive', 'reflexive_possessive'):
+                    r['pronoun_ref'] = rd['display'][0]
+                    r['pronoun_type'] = 'joint_readings'
+
         # --- Build dialogue_turns[] ---
         dialogue_turns = []
         for tid in sorted_turns:
@@ -3003,6 +3135,7 @@ async def entropy_map(req: TensionMapRequest):
             "entity_grid": entity_grid,
             "event_roles": event_roles,
             "reference_stability": reference_stability,
+            "text_facts": text_facts,
             "knowledge_graph": tkg_dict,
             "ambiguity": ambiguity,
             "stylometry": stylometry_result.to_dict() if stylometry_result else None,
