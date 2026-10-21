@@ -12,6 +12,7 @@ import hashlib
 import copy
 from collections import OrderedDict
 from pathlib import Path
+from types import SimpleNamespace
 from typing import List, Dict, Any, Optional, Tuple
 from contextlib import contextmanager
 from dialogue_parser import _is_scene_heading, _is_cast_list
@@ -19,24 +20,27 @@ from fastapi import FastAPI, HTTPException, Depends, UploadFile, File
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, model_validator
 from text_knowledge_graph import (
     TextKnowledgeGraph, EdgeType, KnowledgeStatus, Evidence,
 )
+from speech_attribution import analyze_speech_structure, narrator_event_role_events
 from document_structure import detect_chapter_boundaries
 from source_import import import_pdf, import_epub, import_docx
 
 # --- Configuration & Constants ---
-PARENT_DIR = Path(__file__).resolve().parent.parent
+PARENT_DIR = Path(os.environ.get('SPECTRUM_REPOSITORY_ROOT', Path(__file__).resolve().parent.parent))
 DB_PATH = PARENT_DIR / 'data' / 'language' / 'ru_paradigms.sqlite3'
 SUFFIX_DB_PATH = PARENT_DIR / 'data' / 'language' / 'suffix_model.sqlite3'
-STATIC_DIR = PARENT_DIR / "morphtransformations" / "static"
+STATIC_DIR = Path(os.environ.get('SPECTRUM_STATIC_DIR', PARENT_DIR / "morphtransformations" / "static"))
 TIKHONOV_PATH = PARENT_DIR / "data" / "tikhonov_morphemes.json"
 LOGIC_TRIGGERS_PATH = PARENT_DIR / "neuromorph" / "data" / "linguistic" / "logic_triggers.yaml"
 
 # Add engine to path for MorphemeAlgebra
 sys.path.append(str(PARENT_DIR))
-from engine.hdc.morpheme_algebra import MorphemeAlgebra
+SYMBOLIC_ONLY = os.environ.get('LOGOS_SKIP_MLX') == '1'
+if not SYMBOLIC_ONLY:
+    from engine.hdc.morpheme_algebra import MorphemeAlgebra
 from engine.narrative.stylometry import compute_stylometry
 from engine.narrative.plot_analysis import analyze_text as analyze_plot
 from engine.narrative.scene_detector import detect_scene_boundaries
@@ -44,7 +48,11 @@ from engine.reasoning.text_structure import analyze_thematic_progression
 from engine.language.inflector import analyze as inflector_analyze
 from engine.language.affect_lexicon import lookup as affect_lookup, lookup_lemma as affect_lookup_lemma
 from ru_lexicon import lex
-from spike_lexicon import spike_lex
+from spike_lexicon import SpikeLexicon
+from spectrum_evidence import analyze_style, attach_epistemic_evidence, annotate_event_context, annotate_source_referents
+
+_codebook_path = os.environ.get('SPECTRUM_SPIKE_CODEBOOK_PATH')
+spike_lex = SpikeLexicon(codebook_path=Path(_codebook_path) if _codebook_path else None)
 
 STOP_WORDS = lex.stop_words
 TITLES = lex.titles
@@ -52,7 +60,8 @@ KINSHIP_MARKERS = lex.kinship_markers
 
 # Bootstrap spike lexicon (encodes YAML words → spike vectors, ~300 words)
 try:
-    spike_lex.bootstrap()
+    if not SYMBOLIC_ONLY:
+        spike_lex.bootstrap()
 except Exception as e:
     print(f"[WARN] spike_lex.bootstrap() failed: {e} — spike sentiment disabled")
 
@@ -91,11 +100,11 @@ class KnowledgeBase:
         self._morpheme_cache = {}
         self._suffix_cache = {}
         self._roots_index = None # Lazy load
-        self.morph_algebra = MorphemeAlgebra()
+        self.morph_algebra = None if SYMBOLIC_ONLY else MorphemeAlgebra()
 
     @contextmanager
     def _get_conn(self, path: Path):
-        conn = sqlite3.connect(str(path))
+        conn = sqlite3.connect(f'file:{path}?mode=ro', uri=True)
         try: yield conn
         finally: conn.close()
 
@@ -121,10 +130,12 @@ class KnowledgeBase:
                     if ch == 'е':
                         search_words.append(low[:i] + 'ё' + low[i+1:])
             if 'ё' in low: search_words.append(low.replace('ё', 'е'))
-        unique_search = list(set(search_words))
+        unique_search = [w for w in set(search_words) if w not in self._paradigm_cache]
         if not unique_search: return
         with self._get_conn(self.db_path) as conn:
             c = conn.cursor()
+            for form in unique_search:
+                self._paradigm_cache[form] = []
             placeholders = ','.join(['?'] * len(unique_search))
             c.execute(f"SELECT form, lemma, grammemes FROM paradigms WHERE form IN ({placeholders})", unique_search)
             for f, l, g in c.fetchall():
@@ -195,8 +206,8 @@ class SentimentEngine:
     def get_score(self, word: str) -> float:
         w = word.lower()
         try:
-            if w in self.pos or spike_lex.is_sentiment_positive(w): return 1.0
-            if w in self.neg or spike_lex.is_sentiment_negative(w): return -1.0
+            if w in self.pos or (not SYMBOLIC_ONLY and spike_lex.is_sentiment_positive(w)): return 1.0
+            if w in self.neg or (not SYMBOLIC_ONLY and spike_lex.is_sentiment_negative(w)): return -1.0
         except Exception:
             # Spike codebook broken — fall back to YAML-only
             if w in self.pos: return 1.0
@@ -280,7 +291,7 @@ class NEREngine:
             g = entry['grams']
             if any(x in g for x in ['Name', 'Surn', 'Patr']): confidence += 0.8; is_animate = True; etype = "person"
             if 'anim' in g: is_animate = True; confidence += 0.15
-            if 'Geox' in g: etype = "place"; confidence += 0.2
+            if 'Geox' in g and etype != 'person': etype = "place"; confidence += 0.2
         if etype == "person" and is_animate:
             confidence = max(confidence, 0.85)
         elif etype == "unknown" and is_animate and _person_candidate(token):
@@ -320,9 +331,25 @@ def _store_analysis(key: tuple[str, bool], result: dict) -> None:
         _ANALYSIS_CACHE.popitem(last=False)
 
 
+class SourceAssessment(BaseModel):
+    belief: float = Field(ge=0, le=1)
+    disbelief: float = Field(ge=0, le=1)
+    uncertainty: float = Field(ge=0, le=1)
+    base_rate: float = Field(ge=0, le=1)
+    trust: float = Field(ge=0, le=1)
+
+    @model_validator(mode='after')
+    def normalized(self):
+        if abs(self.belief + self.disbelief + self.uncertainty - 1) > 1e-4:
+            raise ValueError('belief + disbelief + uncertainty must equal 1')
+        return self
+
+
 class TensionMapRequest(BaseModel):
     text: str
     quick: bool = False
+    full: bool = False
+    source_assessments: Dict[str, SourceAssessment] = Field(default_factory=dict)
 
 
 @app.post('/api/import-source')
@@ -454,7 +481,30 @@ def _joint_pronoun_readings(results):
             word_idx.append(i)
     text = ' '.join(parts)
     cs = generate_candidates(text)
-    jr = resolve_readings(text, cs)
+    from dataclasses import replace
+    scope_of = {}
+    sources = {}
+    for position, idx in enumerate(word_idx):
+        row = results[idx]
+        scope = row.get('speech_scope')
+        scope_id = scope['claim_id'] if scope else (
+            f"direct-{row['turn_id']}" if row.get('speaker') and row.get('turn_id') is not None else 'narrator')
+        scope_of[position] = scope_id
+        sources[scope_id] = {'source_scope': scope_id,
+            'source_name': scope.get('source_name') if scope else row.get('speaker') or 'рассказчик',
+            'source_claim_id': scope.get('claim_id') if scope else None,
+            **({key: scope.get(key) for key in ('source_status', 'source_referent_ids', 'source_candidates')} if scope else {}),
+            'world_status': scope.get('world_status') if scope else (
+                'not_assessed' if scope_id != 'narrator' else 'narrator_model')}
+    scoped_runs = []
+    for scope_id in sources:
+        scoped_tokens = [t if scope_of.get(t.index) == scope_id else replace(t,
+            surface='', parse=replace(t.parse, lemma='', pos='UNKN', case=None),
+            sentence=-(t.index+1)) for t in cs.tokens]
+        scoped_cs = replace(cs, tokens=scoped_tokens,
+            pronouns=[p for p in cs.pronouns if scope_of.get(p.token.index) == scope_id],
+            mention_slots=[m for m in cs.mention_slots if scope_of.get(m.token.index) == scope_id])
+        scoped_runs.append((scope_id, resolve_readings(text, scoped_cs)))
     by_id = {ref.id: ref for ref in cs.referents}
     bearers = {}
     for ref in cs.referents:
@@ -473,32 +523,53 @@ def _joint_pronoun_readings(results):
 
     first_surface = {rid: _display(rid) for rid in by_id}
     out = {}
-    for p in jr.pronouns:
-        if p.position >= len(word_idx):
+    for scope_id, jr in scoped_runs:
+      for p in jr.pronouns:
+          if p.position >= len(word_idx):
+              continue
+          display = [first_surface.get(v, v) for v in p.values]
+          out[word_idx[p.position]] = {
+              'status': p.status,
+              'kind': p.kind,
+              'values': p.values,
+              'display': display,
+              'ranking': [[first_surface.get(v, v), layer] for v, layer in p.ranking],
+              'removed': [[first_surface.get(v, v), layer] for v, layer in p.removed],
+              'only_if_different_times': [first_surface.get(v, v) for v in p.conditional],
+              'contradiction_if_negation_covers_anchor': [first_surface.get(v, v)
+                                                          for v in p.contradiction_if_whole],
+              'assumptions': jr.assumptions,
+            'probability': None,
+            **sources[scope_id],
+          }
+    facts = {'status': 'source_scoped', 'facts': [], 'sources': [],
+        'referents': [{'referent_id': ref.id, 'display': _display(ref.id),
+                      'kind': ref.kind, 'members': list(ref.members)} for ref in cs.referents],
+        'mention_bindings': []}
+    for position, rid in cs.mention_ref.items():
+        if position >= len(word_idx):
             continue
-        display = [first_surface.get(v, v) for v in p.values]
-        out[word_idx[p.position]] = {
-            'status': p.status,
-            'kind': p.kind,
-            'values': p.values,
-            'display': display,
-            'ranking': [[first_surface.get(v, v), layer] for v, layer in p.ranking],
-            'removed': [[first_surface.get(v, v), layer] for v, layer in p.removed],
-            'only_if_different_times': [first_surface.get(v, v) for v in p.conditional],
-            'contradiction_if_negation_covers_anchor': [first_surface.get(v, v)
-                                                        for v in p.contradiction_if_whole],
+        ref = by_id.get(rid)
+        if ref is None:
+            continue
+        facts['mention_bindings'].append({'token_index': word_idx[position],
+            'referent_id': rid, 'display': _display(rid),
+            'distinguishes_bearers': bearers.get(ref.label, 0) > 1,
+            'members': [{'referent_id': member, 'display': _display(member)} for member in ref.members]})
+    for scope_id, jr in scoped_runs:
+        facts['sources'].append({**sources[scope_id], 'status': jr.status,
+            'status_if_negations_cover_anchor': jr.status_if_negations_cover_anchor,
             'assumptions': jr.assumptions,
-        }
-    facts = {
-        'status': jr.status,
-        'status_if_negations_cover_anchor': jr.status_if_negations_cover_anchor,
-        'facts': [{'predicate': f['predicate'],
-                   'referent': first_surface.get(f['referent'], f['referent']),
-                   'tense': f['tense'], 'anchor': f['anchor'], 'clause': f['clause'],
-                   'status': f['status'],
-                   'status_if_negations_cover_anchor': f['status_if_negations_cover_anchor']}
-                  for f in jr.facts],
-    }
+            'components': [[word_idx[position] for position in component] for component in jr.components],
+            'joint_slots': [word_idx[p.position] for p in jr.pronouns],
+            'joint_assignments': [list(row) for row in jr.assignments],
+            'joint_assignments_materialized': bool(jr.assignments) or not jr.pronouns,
+            'conditional_assignments': [{'values': list(row), 'reason': reason} for row, reason in jr.conditional],
+            'removed_assignments': [{'values': list(row), 'reason': reason} for row, reason in jr.removed_assignments]})
+        for f in jr.facts:
+            facts['facts'].append({**f, 'referent_id': f['referent'],
+                'referent': first_surface.get(f['referent'], f['referent']),
+                **sources[scope_id]})
     return out, facts
 
 
@@ -591,7 +662,7 @@ def compute_depth_metrics(tokens_data: list, window_size: int = 15) -> dict:
     n_participles = 0
     for t in text_tokens:
         lem = t.get('lemma', t['word'].lower())
-        if lem in subordinators or spike_lex.is_subordinator(lem):
+        if lem in subordinators or (not SYMBOLIC_ONLY and spike_lex.is_subordinator(lem)):
             n_subordinators += 1
         # Participles and gerunds indicate structural embedding
         pos = t.get('pos', '')
@@ -662,7 +733,7 @@ def compute_depth_metrics(tokens_data: list, window_size: int = 15) -> dict:
 
 
 # --- Text Structural Segmentation ---
-def segment_text(text: str, tokens: list, entity_map: dict) -> list:
+def segment_text(text: str, tokens: list, entity_map: dict, quick: bool = False) -> list:
     """Segment text into structural blocks using engine analysis.
     
     Returns list of boundary markers:
@@ -747,7 +818,7 @@ def segment_text(text: str, tokens: list, entity_map: dict) -> list:
             # Fallback: stage direction nouns (not morphologically verb-like)
             _STAGE_NOUNS = lex.stage_direction_nouns
             lower_set = {w.lower().rstrip('.') for w in words}
-            stage_spike = any(spike_lex.is_category(w, 'stage_direction')
+            stage_spike = any((not SYMBOLIC_ONLY and spike_lex.is_category(w, 'stage_direction'))
                               for w in lower_set)
             if is_stage_verb or (lower_set & _STAGE_NOUNS) or stage_spike:
                 return ('stage_direction', 0.85)  # inflector: VERB+3per or stage noun
@@ -776,7 +847,7 @@ def segment_text(text: str, tokens: list, entity_map: dict) -> list:
         if (len(words) == 1 and not all_caps and not has_numeral
                 and not ends_with_punct and not has_bad_punct
                 and words[0][0].isupper()
-                and ner.classify_candidate(words[0])['type'] == 'person'
+                and ner.classify_candidate(words[0])['type'] in ('person', 'unknown_capitalized')
                 and next_line
                 and (next_line.startswith('(') or len(next_line.split()) > 1
                      or next_line.endswith(('.', '!', '?', '…'))
@@ -1096,6 +1167,23 @@ def segment_text(text: str, tokens: list, entity_map: dict) -> list:
             })
             existing_seg_toks.add(after_tok)
     
+    if quick:
+        # Build turn labels using the structural markers already collected.
+        deduped = sorted(segments, key=lambda x: x['after_token'])
+        speaker_map, line_type_map, line_type_conf_map = {}, {}, {}
+        current_speaker, turn_id = None, -1
+        markers = {s['after_token'] + 1: s for s in deduped}
+        for index, token in enumerate(tokens):
+            marker = markers.get(index)
+            if marker and marker['type'] == 'speaker':
+                current_speaker = marker.get('reason', '').replace('form:', '').strip()
+                turn_id += 1
+            if current_speaker:
+                speaker_map[index] = {'speaker': current_speaker, 'turn_id': turn_id, 'speaker_confidence': 0.8}
+            line_type_map[index] = 'TEXT'
+            line_type_conf_map[index] = 0.5
+        return deduped, speaker_map, line_type_map, line_type_conf_map, [], [], {}
+
     # --- Pass 2: Scene boundaries (entity change + temporal markers) ---
     # Use high threshold + wide window to avoid marking every speaker change
     # as a scene break. Within one "явление", speaker changes are dialogue, not scenes.
@@ -1593,7 +1681,7 @@ def build_text_knowledge_graph(
             )
 
     # ── Event roles ──────────────────────────────────────────────
-    for ev_idx, event in enumerate(event_roles):
+    for ev_idx, event in enumerate(narrator_event_role_events(event_roles)):
         ev_label = event.get('predicate', f'event_{ev_idx}')
         ev_range = event.get('token_range', [0, 0])
         event_node = tkg.get_or_create_event(
@@ -1611,6 +1699,9 @@ def build_text_knowledge_graph(
             'source':      EdgeType.SOURCE_OF,
         }
         for role_rec in event.get('roles', []):
+            # Quoted/reported content is visible evidence, not a narrator-world edge.
+            if role_rec.get('scope', 'narrator') != 'narrator':
+                continue
             eid = role_rec.get('entity_id', '')
             if not eid:
                 continue
@@ -1764,13 +1855,14 @@ def _match_valency_frame(predicate: str, roles: list, words: list) -> tuple[dict
         matches = {}
         for spec_role, marker in re.findall(r'([A-Z_]+)\(([^)]*)\)', frame.get('pattern', '')):
             for index, token_role in enumerate(roles):
-                if not token_role.case:
+                cases = getattr(token_role, 'cases', ()) or (token_role.case,)
+                if not any(cases):
                     continue
                 markers = marker.lower().split('/')
                 previous = words[index - 1].lower() if index else ''
                 if any(
-                    token_role.case == item or
-                    ('+' in item and token_role.case == item.rsplit('+', 1)[1] and
+                    item in cases or
+                    ('+' in item and item.rsplit('+', 1)[1] in cases and
                      previous == item.rsplit('+', 1)[0])
                     for item in markers
                 ):
@@ -1781,90 +1873,104 @@ def _match_valency_frame(predicate: str, roles: list, words: list) -> tuple[dict
     return best_frame, best_matches
 
 
-def extract_observable_event_roles(results: list) -> list[dict]:
-    """Extract conservative event-role evidence for Spectrum.
+def _apply_valency_frames(event_roles: list[dict], tokens: list[dict]) -> None:
+    """Enrich dependency roles with matching grammar frames and required-role gaps."""
+    words = [str(token.get('word', '')) for token in tokens]
+    for event in event_roles:
+        frame_tokens = [SimpleNamespace(case=None) for _ in tokens]
+        for role in event.get('roles', []):
+            token_range = role.get('token_range') or []
+            token_index = token_range[0] if token_range else -1
+            if not 0 <= token_index < len(frame_tokens):
+                continue
+            case = role.get('case') or tokens[token_index].get('case')
+            candidates = tokens[token_index].get('morph_readings', {}).get('candidates', [])
+            case_names = {'nomn', 'gent', 'datv', 'accs', 'ablt', 'loct', 'voct', 'gen2', 'loc2'}
+            cases = {g for c in candidates if c.get('compatible') is not False
+                     for g in c['grammemes'] if g in case_names}
+            frame_tokens[token_index].case = case if not cases or case in cases else None
+            frame_tokens[token_index].cases = cases or {case}
 
-    The neuromorph extractor remains optional because Spectrum must still run
-    when MLX or its model dependencies are unavailable. Returned spans refer
-    to the API token stream, not reconstructed text offsets.
-    """
-    try:
-        from neuromorph.strategy.role_learner import MorphoRoleAssigner
-    except Exception:
+        frame, matches = _match_valency_frame(
+            str(event.get('predicate', '')).lower(), frame_tokens, words
+        )
+        if not frame:
+            continue
+        event['verb_frame'] = frame.get('pattern', '')
+        obligatory = frame.get('obligatory', []) or []
+        matched_roles = set(matches.values())
+        event['missing_roles'] = [role for role in obligatory if role not in matched_roles]
+        event['incomplete_event'] = bool(event['missing_roles'])
+        for role in event.get('roles', []):
+            token_range = role.get('token_range') or []
+            token_index = token_range[0] if token_range else -1
+            frame_role = matches.get(token_index)
+            if frame_role:
+                role['role'] = frame_role.lower()
+                role['source'] = 'verb_frame'
+                role['evidence_grade'] = 'valency_frame'
+                role['verb_frame_role'] = frame_role
+
+
+def extract_observable_event_roles(results: list, text: str | None = None) -> list[dict]:
+    """Return dependency-backed, frame-enriched roles without loading the MLX role learner."""
+    if not results:
         return []
+    if text is None:
+        max_end = max((int(row.get('char_end', 0)) for row in results), default=0)
+        has_spans = max_end > 0 and all(
+            int(row.get('char_start', -1)) >= 0
+            and int(row.get('char_end', -1)) - int(row.get('char_start', -1)) == len(row.get('word', ''))
+            for row in results
+        )
+        if has_spans:
+            chars = [' '] * max_end
+            for row in results:
+                start = int(row['char_start'])
+                end = int(row['char_end'])
+                chars[start:end] = row.get('word', '')
+            text = ''.join(chars)
+        else:
+            text = ' '.join(str(row.get('word', '')) for row in results if row.get('word'))
 
-    assigner = MorphoRoleAssigner()
-    events = []
-    sentence_start = 0
-    sentence_tokens = []
+    from engine.parsing.dep_parser import DepParser
 
-    def flush_sentence(start: int, token_rows: list) -> None:
-        words = [row['word'] for row in token_rows]
-        if not any(word[:1].isalpha() for word in words):
-            return
-        try:
-            frame = assigner.assign_roles(words)
-        except Exception:
-            return
-        predicate = next((tr.lemma or tr.token for tr in frame.roles
-                          if tr.role == 'ACTION'), '')
-        valency_frame, valency_matches = _match_valency_frame(predicate, frame.roles, words)
-        role_rows = []
-        for offset, token_role in enumerate(frame.roles):
-            valency_role = valency_matches.get(offset)
-            role = valency_role or token_role.role
-            if role not in {'AGENT', 'PATIENT', 'RECIPIENT', 'LOCATION', 'DIRECTION',
-                            'SOURCE', 'EXPERIENCER', 'BENEFICIARY', 'STIMULUS'}:
+    parser = DepParser()
+    parsed_nodes = parser.parse_tree(text)
+    nodes_by_span = {
+        (int(node.char_start), int(node.char_end)): node
+        for node in parsed_nodes
+        if node.char_start is not None and node.char_end is not None
+    }
+    analysis_tokens = []
+    cursor = 0
+    for original in results:
+        row = dict(original)
+        word = str(row.get('word', ''))
+        if not word:
+            continue
+        start = int(row.get('char_start', -1))
+        end = int(row.get('char_end', -1))
+        if start < 0 or end - start != len(word) or text[start:end] != word:
+            start = text.find(word, cursor)
+            if start < 0:
                 continue
-            if role == 'SOURCE' and not valency_role:
-                continue
-            if offset >= len(token_rows):
-                continue
-            token = token_rows[offset]
-            parses = inflector_analyze(token['word'])
-            if any(getattr(parse, 'pos', '') in {'PREP', 'CONJ', 'PRCL', 'INTJ', 'PART', 'SCONJ'}
-                   for parse in parses):
-                continue
-            entity_id = token.get('entity_id', '')
-            if entity_id:
-                name = token.get('clean') or token['word']
-            else:
-                # An unresolved filler names only itself. Borrowing `clean`
-                # here would attach another entity's canonical name to a
-                # freshly minted role:<lemma> identity.
-                name = token['word']
-                lemma = token_role.lemma or token.get('lemma') or token['word']
-                entity_id = f'role:{lemma.lower().replace("ё", "е")}'
-            evidence_confidence = 0.75 if valency_role else 0.5
-            role_rows.append({
-                'entity_id': entity_id,
-                'name': name,
-                'role': role.lower(),
-                'token_range': [start + offset, start + offset],
-                'confidence': evidence_confidence,
-                'source': 'verb_frame' if valency_role else token_role.source,
-            })
-        if role_rows:
-            observed_roles = {row['role'].upper() for row in role_rows}
-            obligatory = set(valency_frame.get('obligatory', [])) if valency_frame else set()
-            events.append({
-                'token_range': [start, start + len(token_rows) - 1],
-                'predicate': predicate,
-                'verb_frame': valency_frame.get('pattern') if valency_frame else frame.verb_frame,
-                'roles': role_rows,
-                'incomplete_event': bool(obligatory - observed_roles),
-                'missing_roles': sorted(obligatory - observed_roles),
-            })
+            end = start + len(word)
+        cursor = end
+        row['char_start'] = start
+        row['char_end'] = end
+        node = nodes_by_span.get((start, end))
+        if node is not None:
+            row['lemma'] = node.lemma
+            row['pos'] = node.pos
+            row['case'] = node.case
+        analysis_tokens.append(row)
 
-    for index, token in enumerate(results):
-        sentence_tokens.append(token)
-        if token['word'] in ('.', '!', '?', '…'):
-            flush_sentence(sentence_start, sentence_tokens)
-            sentence_start = index + 1
-            sentence_tokens = []
-    if sentence_tokens:
-        flush_sentence(sentence_start, sentence_tokens)
-    return events
+    event_roles = analyze_speech_structure(
+        text, analysis_tokens, parser=parser
+    )['event_roles']
+    _apply_valency_frames(event_roles, analysis_tokens)
+    return event_roles
 
 
 def build_scene_role_grid(results: list, text_segments: list, dialogue_turns: list,
@@ -1935,6 +2041,14 @@ def build_scene_role_grid(results: list, text_segments: list, dialogue_turns: li
         line_type = token.get('line_type', '')
         entity_role = token.get('entity_role', '')
 
+        # Mentions inside attributed speech stay visible as discourse mentions,
+        # but they cannot establish narrator-scoped presence or event roles.
+        if token.get('speech_scopes'):
+            if entity_role == 'mentioned' and entity_id:
+                observe(scene_id, entity_id, name, 'mentioned', index,
+                        token.get('confidence', 0.6), 'entity_mention_in_speech')
+            continue
+
         if line_type == 'SPEAKER' and entity_id:
             observe(scene_id, entity_id, name, 'speaker', index, 0.98, 'speaker_label')
             observe(scene_id, entity_id, name, 'present', index, 0.98, 'speaker_label')
@@ -1945,6 +2059,9 @@ def build_scene_role_grid(results: list, text_segments: list, dialogue_turns: li
         if entity_role == 'mentioned' and entity_id:
             observe(scene_id, entity_id, name, 'mentioned', index,
                     token.get('confidence', 0.6), 'entity_mention')
+            for member in token.get('referent_members', []):
+                observe(scene_id, member['referent_id'], member['display'], 'mentioned', index,
+                        token.get('confidence', 0.6), 'explicit_group_member')
 
     # A speaker may be carried by all tokens in a turn, while the label itself
     # has no entity_id. Add a turn-level, explicit observation as a fallback.
@@ -1952,6 +2069,8 @@ def build_scene_role_grid(results: list, text_segments: list, dialogue_turns: li
     # do not by themselves establish physical presence in a scene.
     for event in event_roles or []:
         for event_role in event['roles']:
+            if event_role.get('scope', 'narrator') != 'narrator':
+                continue
             token_index = event_role['token_range'][0]
             observe(scene_for(token_index), event_role['entity_id'], event_role['name'],
                     event_role['role'], token_index, event_role['confidence'],
@@ -2046,8 +2165,9 @@ async def entropy_map(req: TensionMapRequest):
                 'input_chars': len(req.text),
             },
         )
-    quick_mode = req.quick or len(req.text) > QUICK_MODE_CHARS
-    cache_key = _analysis_cache_key(req.text, quick_mode)
+    # Explicit full analysis overrides the automatic long-text quick path.
+    quick_mode = not req.full and (req.quick or len(req.text) >= QUICK_MODE_CHARS)
+    cache_key = _analysis_cache_key(req.text + json.dumps({k: v.model_dump() for k, v in req.source_assessments.items()}, sort_keys=True), quick_mode)
     cached = _cached_analysis(cache_key)
     if cached is not None:
         result = copy.deepcopy(cached)
@@ -2058,7 +2178,7 @@ async def entropy_map(req: TensionMapRequest):
             'timings_ms': {'cache_lookup': round((time.perf_counter() - started_at) * 1000, 2)},
         }
         return result
-    partial_features = []
+    partial_features = ['spike_lexicon', 'morpheme_entropy'] if SYMBOLIC_ONLY else []
     try:
         # Use finditer to capture positions for computing inter-token gaps
         token_pattern = re.compile(r"[\w-]+|[^\w\s]")
@@ -2099,6 +2219,8 @@ async def entropy_map(req: TensionMapRequest):
                 l1, gen = kb.get_best_lemma(t)
                 parts = [t]; lemmas = [l1]; ni = i + 1
                 while ni < len(tokens):
+                    if '\n' in token_gaps[ni]:
+                        break  # A new line cannot extend a multiword name.
                     nt = tokens[ni]; n_res = ner.classify_candidate(nt)
                     if n_res['type'] == "person" or (nt[0].isupper() and n_res['confidence'] > 0.1):
                         ln, _ = kb.get_best_lemma(nt, gen); parts.append(nt); lemmas.append(ln); ni += 1
@@ -2241,6 +2363,8 @@ async def entropy_map(req: TensionMapRequest):
                       if quick_mode else sentiment.get_affect(t, tok_lemma))
             tok_dict = {
                 "word": t, "clean": ent['canonical'] if ent else t, "h": h,
+                "char_start": token_matches[i].start(),
+                "char_end": token_matches[i].end(),
                 "s": sentiment.get_score(t),
                 "val": affect['val'], "aro": affect['aro'], "conc": affect['conc'],
                 "pos": tok_pos, "lemma": tok_lemma,
@@ -2275,7 +2399,7 @@ async def entropy_map(req: TensionMapRequest):
             # Keep quick mode bounded: retain the cheap line-structure pass so
             # the UI can still render speakers, headings, and stage directions.
             quick_segments, quick_speakers, quick_line_types, quick_line_conf, _, _, _ = segment_text(
-                req.text, tokens, entity_map
+                req.text, tokens, entity_map, quick=True
             )
             for token_index, token_result in enumerate(results):
                 token_result['line_type'] = quick_line_types.get(token_index, 'TEXT')
@@ -2291,7 +2415,7 @@ async def entropy_map(req: TensionMapRequest):
             ]
             partial_features.extend([
                 'stylometry', 'plot_arc', 'segmentation', 'dialogue_roles',
-                'text_knowledge_graph', 'document_structure',
+                'text_knowledge_graph', 'morph_unification', 'style_profile', 'text_facts',
             ])
             timings_ms['total'] = round((time.perf_counter() - started_at) * 1000, 2)
             result = {
@@ -2302,6 +2426,7 @@ async def entropy_map(req: TensionMapRequest):
                     'input_chars': len(req.text),
                     'token_count': len(tokens),
                     'quick_mode': True,
+                    'full_requested': req.full,
                     'partial_features': partial_features,
                     'timings_ms': timings_ms,
                 },
@@ -2310,6 +2435,11 @@ async def entropy_map(req: TensionMapRequest):
                 'entities': [],
                 'entity_grid': [],
                 'event_roles': [],
+                'speech_claims': [],
+                'speech_attribution_diagnostics': [],
+                'text_facts': {'status': 'not_computed', 'facts': []},
+                'morph_unification': [],
+                'style_profile': {'status': 'not_computed'},
                 'reference_stability': None,
                 'knowledge_graph': None,
                 'ambiguity': None,
@@ -2339,6 +2469,7 @@ async def entropy_map(req: TensionMapRequest):
             partial_features.append('stylometry')
         else:
             stylometry_result = compute_stylometry(req.text)
+        style_profile = analyze_style(req.text)
         timings_ms['stylometry'] = round(
             (time.perf_counter() - stage_started_at) * 1000, 2
         )
@@ -2350,80 +2481,82 @@ async def entropy_map(req: TensionMapRequest):
         # --- Plot Arc Analysis (Formal System Σ) ---
         stage_started_at = time.perf_counter()
         plot_arc = None
-        try:
-            pr = analyze_plot(req.text)
-            tensions = pr.detail.get('tensions', [])
-            n = len(tensions)
-            climax_idx = 0
-            if n:
-                peak = max(tensions)
-                # Use LAST occurrence of peak to handle plateau climaxes
-                for ii in range(n):
-                    if tensions[ii] == peak:
-                        climax_idx = ii
-            # Segment into Freytag zones
-            stages = []
-            if n > 0:
-                peak_val = max(tensions) if tensions else 0
-                for i in range(n):
-                    pos = i / max(n - 1, 1)
-                    if tensions[i] == peak_val and i >= climax_idx * 0.8:
-                        # All events at peak tension level are climax
-                        # (handles plateau where multiple events share max)
-                        stages.append('climax')
-                    elif i < climax_idx:
-                        # Pre-climax: exposition vs rising
-                        if tensions[i] < 0.2 and i < n * 0.3:
-                            stages.append('exposition')
+        if SYMBOLIC_ONLY:
+            partial_features.append('plot_arc')
+        else:
+            try:
+                pr = analyze_plot(req.text)
+                tensions = pr.detail.get('tensions', [])
+                n = len(tensions)
+                climax_idx = 0
+                if n:
+                    peak = max(tensions)
+                    # Use LAST occurrence of peak to handle plateau climaxes
+                    for ii in range(n):
+                        if tensions[ii] == peak:
+                            climax_idx = ii
+                # Segment into Freytag zones
+                stages = []
+                if n > 0:
+                    peak_val = max(tensions) if tensions else 0
+                    for i in range(n):
+                        pos = i / max(n - 1, 1)
+                        if tensions[i] == peak_val and i >= climax_idx * 0.8:
+                            # All events at peak tension level are climax
+                            # (handles plateau where multiple events share max)
+                            stages.append('climax')
+                        elif i < climax_idx:
+                            # Pre-climax: exposition vs rising
+                            if tensions[i] < 0.2 and i < n * 0.3:
+                                stages.append('exposition')
+                            else:
+                                stages.append('rising_action')
                         else:
-                            stages.append('rising_action')
-                    else:
-                        # Post-climax: falling vs denouement
-                        if i > n * 0.85:
-                            stages.append('denouement')
-                        else:
-                            stages.append('falling_action')
-            # Diagnostics: detect missing elements
-            diagnostics = []
-            if pr.arc_closure < 1.0:
-                open_count = sum(1 for o, c in pr.detail.get('arcs', []) if c is None) if 'arcs' in pr.detail else 0
-                diagnostics.append({'type': 'open_arcs', 'message': f'{open_count} незакрытых арок', 'severity': 'warning'})
-            if pr.inevitability < 0.3:
-                diagnostics.append({'type': 'no_buildup', 'message': 'Нет нарастания к кульминации', 'severity': 'info'})
-            if pr.surprise < 0.1:
-                diagnostics.append({'type': 'flat', 'message': 'Плоский сюжет без поворотов', 'severity': 'warning'})
-            nrt = pr.detail.get('narrativity', {})
-            if nrt.get('is_chronicle'):
-                diagnostics.append({'type': 'chronicle', 'message': 'Хроника: последовательность без конфликта', 'severity': 'info'})
-            if n > 0 and climax_idx == n - 1 and n > 3:
-                diagnostics.append({'type': 'truncated', 'message': 'Текст обрывается на кульминации — нет развязки', 'severity': 'warning'})
-            if n > 0 and all(t < 0.3 for t in tensions):
-                diagnostics.append({'type': 'no_climax', 'message': 'Кульминация не выражена', 'severity': 'warning'})
-            plot_arc = {
-                'beauty_score': round(pr.beauty_score, 3),
-                'surprise': round(pr.surprise, 3),
-                'inevitability': round(pr.inevitability, 3),
-                'arc_closure': round(pr.arc_closure, 3),
-                'causality': round(pr.causality, 3),
-                'n_events': pr.detail.get('n_events', 0),
-                'tensions': [round(t, 3) for t in tensions],
-                'events': pr.detail.get('event_labels', []),
-                'stages': stages,
-                'climax_idx': climax_idx,
-                'diagnostics': diagnostics,
-            }
-        except Exception as e:
-            import traceback
-            err_msg = f'Plot analysis failed: {type(e).__name__}: {e}'
-            print(err_msg)
-            print(traceback.format_exc())
-            plot_arc = {
-                'beauty_score': 0,
-                'surprise': 0, 'inevitability': 0, 'arc_closure': 1, 'causality': 0,
-                'n_events': 0, 'tensions': [], 'events': [], 'stages': [],
-                'climax_idx': 0,
-                'diagnostics': [{'type': 'error', 'message': f'Ошибка анализа сюжета: {type(e).__name__}', 'severity': 'error'}],
-            }
+                            # Post-climax: falling vs denouement
+                            if i > n * 0.85:
+                                stages.append('denouement')
+                            else:
+                                stages.append('falling_action')
+                # Diagnostics: detect missing elements
+                diagnostics = []
+                if pr.arc_closure < 1.0:
+                    open_count = sum(1 for o, c in pr.detail.get('arcs', []) if c is None) if 'arcs' in pr.detail else 0
+                    diagnostics.append({'type': 'open_arcs', 'message': f'{open_count} незакрытых арок', 'severity': 'warning'})
+                if pr.inevitability < 0.3:
+                    diagnostics.append({'type': 'no_buildup', 'message': 'Нет нарастания к кульминации', 'severity': 'info'})
+                if pr.surprise < 0.1:
+                    diagnostics.append({'type': 'flat', 'message': 'Плоский сюжет без поворотов', 'severity': 'warning'})
+                nrt = pr.detail.get('narrativity', {})
+                if nrt.get('is_chronicle'):
+                    diagnostics.append({'type': 'chronicle', 'message': 'Хроника: последовательность без конфликта', 'severity': 'info'})
+                if n > 0 and climax_idx == n - 1 and n > 3:
+                    diagnostics.append({'type': 'truncated', 'message': 'Текст обрывается на кульминации — нет развязки', 'severity': 'warning'})
+                if n > 0 and all(t < 0.3 for t in tensions):
+                    diagnostics.append({'type': 'no_climax', 'message': 'Кульминация не выражена', 'severity': 'warning'})
+                plot_arc = {
+                    'beauty_score': round(pr.beauty_score, 3),
+                    'surprise': round(pr.surprise, 3),
+                    'inevitability': round(pr.inevitability, 3),
+                    'arc_closure': round(pr.arc_closure, 3),
+                    'causality': round(pr.causality, 3),
+                    'n_events': pr.detail.get('n_events', 0),
+                    'tensions': [round(t, 3) for t in tensions],
+                    'events': pr.detail.get('event_labels', []),
+                    'stages': stages,
+                    'climax_idx': climax_idx,
+                    'diagnostics': diagnostics,
+                }
+            except Exception as e:
+                err_msg = f'Plot analysis failed: {type(e).__name__}: {e}'
+                print(err_msg)
+                print(traceback.format_exc())
+                plot_arc = {
+                    'beauty_score': 0,
+                    'surprise': 0, 'inevitability': 0, 'arc_closure': 1, 'causality': 0,
+                    'n_events': 0, 'tensions': [], 'events': [], 'stages': [],
+                    'climax_idx': 0,
+                    'diagnostics': [{'type': 'error', 'message': f'Ошибка анализа сюжета: {type(e).__name__}', 'severity': 'error'}],
+                }
 
         timings_ms['plot_analysis'] = round(
             (time.perf_counter() - stage_started_at) * 1000, 2
@@ -2441,7 +2574,6 @@ async def entropy_map(req: TensionMapRequest):
         try:
             text_segments, speaker_map, line_type_map, line_type_conf_map, morph_boundaries, kl_boundaries, fused_boundaries = segment_text(req.text, tokens, entity_map)
         except Exception as e:
-            import traceback
             print(f'Segmentation failed: {e}')
             print(traceback.format_exc())
         
@@ -2676,7 +2808,7 @@ async def entropy_map(req: TensionMapRequest):
                     bw = results[back_j]['word'].lower()
                     if bw in ('.', '!', '?', '…'):
                         break
-                    if bw in rhetorical_markers or spike_lex.is_rhetorical(bw):
+                    if bw in rhetorical_markers or (not SYMBOLIC_ONLY and spike_lex.is_rhetorical(bw)):
                         has_marker = True
                         break
                     # Also check lemmas
@@ -2714,7 +2846,7 @@ async def entropy_map(req: TensionMapRequest):
                 turn_speech_acts[tid]['exclamation'] = 1.0
             
             # Negation at start of turn: "Нет, ..." → denial
-            if lt == 'TEXT' and (r['word'].lower() in lex.denial_words or spike_lex.is_denial(r['word'])) and i > 0:
+            if lt == 'TEXT' and (r['word'].lower() in lex.denial_words or (not SYMBOLIC_ONLY and spike_lex.is_denial(r['word']))) and i > 0:
                 prev_lt = results[i-1].get('line_type', '')
                 if prev_lt == 'SPEAKER' or (i > 1 and results[i-2].get('line_type') == 'SPEAKER'):
                     if tid not in turn_speech_acts:
@@ -2773,7 +2905,7 @@ async def entropy_map(req: TensionMapRequest):
                     {'Name', 'Surn', 'Patr'} & set(getattr(parse, 'grammemes', ()))
                     for parse in parses
                 )
-                if r.get('confidence', 0) >= 0.6 or proper_name:
+                if r.get('confidence', 0) >= 0.6 or proper_name or _person_candidate(r['word']):
                     r['entity_role'] = 'mentioned'
                     canon, eid = resolve_entity(r['word'])
                     if eid:
@@ -2981,21 +3113,20 @@ async def entropy_map(req: TensionMapRequest):
                             except Exception:
                                 prev_lemmas.add(pw)
                     
-                    if prev_lemmas & lex.title_signals or any(
-                        spike_lex.is_title_signal(l) for l in prev_lemmas
-                    ):
-                        quote_subtype = 'title'
-                    # Embedded speech: preceded by speech verbs (spike-enhanced)
-                    elif prev_lemmas & lex.speech_verbs or any(
-                        spike_lex.is_speech_verb(l) for l in prev_lemmas
-                    ):
-                        quote_subtype = 'embedded_speech'
-                    # Ironic: preceded by meta-markers
-                    elif any(w in prev_words for w in lex.ironic_markers) or any(
-                        spike_lex.is_ironic(w) for w in prev_words if w
-                    ):
+                    if any(w in lex.ironic_markers for w in prev_words):
                         quote_subtype = 'ironic'
-                    
+                    elif prev_lemmas & lex.title_signals:
+                        quote_subtype = 'title'
+                    elif prev_lemmas & lex.speech_verbs:
+                        quote_subtype = 'embedded_speech'
+                    elif not SYMBOLIC_ONLY:
+                        if any(spike_lex.is_ironic(w) for w in prev_words if w):
+                            quote_subtype = 'ironic'
+                        elif any(spike_lex.is_title_signal(l) for l in prev_lemmas):
+                            quote_subtype = 'title'
+                        elif any(spike_lex.is_speech_verb(l) for l in prev_lemmas):
+                            quote_subtype = 'embedded_speech'
+
                     current_quote_subtype = quote_subtype
                 elif tok_r['word'] == '»':
                     in_quote = False
@@ -3036,7 +3167,66 @@ async def entropy_map(req: TensionMapRequest):
         
         # --- Observable reference stability, event roles, scene participants, and entity grid ---
         reference_stability = compute_reference_stability(results)
-        event_roles = extract_observable_event_roles(results)
+        speech_analysis = analyze_speech_structure(req.text, results, dialogue_turns)
+        event_roles = speech_analysis['event_roles']
+        _apply_valency_frames(event_roles, results)
+        speech_claims = speech_analysis['speech_claims']
+        annotate_source_referents(speech_claims, results, text_facts.get('referents', []))
+        attach_epistemic_evidence(speech_claims, event_roles,
+            {k: v.model_dump() for k, v in req.source_assessments.items()})
+        annotate_event_context(event_roles, results, req.text)
+        # Recompute against actual nested speech scopes, preserving the global
+        # candidate/bearer register while separating source-local constraints.
+        final_readings, text_facts = _joint_pronoun_readings(results)
+        for idx, rd in final_readings.items():
+            results[idx]['pronoun_readings'] = rd
+            if results[idx].get('pronoun_type') == '2per' and results[idx].get('pronoun_ref'):
+                # GENERIC_YOU is the resolver's variable, while the existing
+                # turn/vocative mechanism supplies its contextual participant.
+                name, eid = resolve_entity(results[idx]['pronoun_ref'])
+                rd['participant_binding'] = {'variable': 'GENERIC_YOU',
+                    'name': name, 'entity_id': eid, 'status': 'context_binding',
+                    'source': 'turn_addressee', 'probability': None}
+            elif rd['status'] != 'determinate':
+                results[idx].pop('pronoun_ref', None)
+                results[idx]['pronoun_candidates'] = rd['display']
+            elif rd['display']:
+                results[idx]['pronoun_ref'] = rd['display'][0]
+            if rd['kind'] in ('name', 'name_choice', 'one_of'):
+                results[idx]['referent_ids'] = rd['values']
+                if len(rd['values']) != 1:
+                    results[idx].pop('entity_id', None)
+        for binding in text_facts.get('mention_bindings', []):
+            row = results[binding['token_index']]
+            row['referent_ids'] = [binding['referent_id']]
+            if row.get('line_type') == 'TEXT' and row['word'][:1].isupper() and not row.get('entity_id'):
+                # Preserve the existing referent register even if the name
+                # dictionary only recognizes a place (e.g. София). This is
+                # a discourse mention, not proof of a person or presence.
+                row['entity_id'] = binding['referent_id']
+                row['entity_role'] = 'mentioned'
+                row['clean'] = binding['display']
+                row['entity_type'] = 'referent'
+                row['referent_status'] = 'candidate'
+            if binding['distinguishes_bearers']:
+                row['entity_id'] = binding['referent_id']
+                row['clean'] = binding['display']
+                row['referent_members'] = binding['members']
+        for event in event_roles:
+            for role in event['roles']:
+                rd = results[role['token_range'][0]].get('pronoun_readings')
+                if rd:
+                    role['referent_ids'] = rd['values']
+                    role['referent_candidates'] = rd['display']
+                    if len(rd['values']) != 1:
+                        role['scope'] = 'unresolved_reference'
+                        role['world_status'] = 'not_assessed'
+        reference_stability = compute_reference_stability(results)
+        for event in event_roles:
+            scopes = {role.get('scope', 'narrator') for role in event['roles']}
+            event['scope'] = next(iter(scopes)) if len(scopes) == 1 else 'mixed'
+            if scopes != {'narrator'}:
+                event['world_status'] = 'not_assessed'
         timings_ms['event_roles'] = round((time.perf_counter() - started_at) * 1000, 2)
         scenes, entities, entity_grid = build_scene_role_grid(
             results, text_segments, dialogue_turns, event_roles
@@ -3126,6 +3316,7 @@ async def entropy_map(req: TensionMapRequest):
                 "input_chars": len(req.text),
                 "token_count": len(tokens),
                 "quick_mode": quick_mode,
+                "full_requested": req.full,
                 "partial_features": partial_features,
                 "timings_ms": timings_ms,
             },
@@ -3134,6 +3325,10 @@ async def entropy_map(req: TensionMapRequest):
             "entities": entities,
             "entity_grid": entity_grid,
             "event_roles": event_roles,
+            "speech_claims": speech_claims,
+            "speech_attribution_diagnostics": speech_analysis['diagnostics'],
+            "morph_unification": speech_analysis['morph_unification'],
+            "style_profile": style_profile,
             "reference_stability": reference_stability,
             "text_facts": text_facts,
             "knowledge_graph": tkg_dict,

@@ -667,6 +667,22 @@
             text-underline-offset: 4px;
             font-weight: 600;
         }
+        .tok-direct-claim { border-bottom: 1px dashed var(--signal-amber); }
+        .tok-reported-claim { border-bottom: 1px dotted var(--signal-high); }
+        .tok-event-role { border-radius: 2px; }
+        .hl-roles .tok-event-role {
+            background: oklch(0.76 0.15 85 / 16%);
+            box-shadow: inset 0 -2px oklch(0.76 0.15 85 / 75%);
+            text-decoration: none;
+        }
+        .hl-roles .tok-reported-claim { border-bottom-color: var(--signal-high); }
+        .hl-roles .tok-direct-claim { border-bottom-color: var(--signal-amber); }
+        .text-facts-panel { margin-top: 14px; padding-top: 10px; border-top: 1px solid var(--border-subtle); }
+        .text-fact-row { display: flex; gap: 8px; justify-content: space-between; align-items: flex-start; margin: 6px 0; font-size: 10px; }
+        .text-fact-atom { flex: 1 1 auto; color: var(--text-muted); overflow-wrap: anywhere; }
+        .text-fact-status { flex: 0 1 55%; max-width: 60%; color: var(--text); font-family: var(--font-mono); text-align: right; line-height: 1.45; overflow-wrap: anywhere; }
+        .text-fact-status-line { display: block; }
+        .text-facts-caveat { margin: 6px 0; color: var(--text-dim); font-size: 10px; line-height: 1.45; }
         .hl-roles .tok-entropy-high,
         .hl-roles .tok-entropy-mid,
         .hl-roles .tok-entropy-low { text-decoration: none !important; border-bottom: none !important; }
@@ -1087,6 +1103,7 @@
 
         @keyframes pulse { 0%,100%{box-shadow:0 0 4px var(--neon-glow)}50%{box-shadow:0 0 14px var(--neon-glow)} }
         .loading .logo-dot { animation: pulse 1.2s ease-in-out infinite; }
+        .btn-full-analysis[hidden] { display: none !important; }
     </style>
 </head>
 <body>
@@ -1099,6 +1116,7 @@
         <span class="header-sub">Narrative DAW · Entropy Gate</span>
         <div class="header-right">
             <span class="header-stats" id="stats"></span>
+            <button class="btn btn-secondary btn-full-analysis" id="btnFullAnalysis" onclick="analyzeFullDocument()" hidden>Полный разбор</button>
             <button class="btn btn-secondary" id="btnDownloadText" onclick="downloadText()" title="Скачать исходный текст" aria-label="Скачать текст">⇩ Текст</button>
             <button class="btn btn-secondary" id="btnDownloadRoles" onclick="downloadRoles()" title="Скачать все роли" aria-label="Скачать роли">⇩ Роли</button>
             <button class="btn btn-secondary" id="btnDownload" onclick="downloadScript()">Скачать</button>
@@ -1196,11 +1214,17 @@
     let entities = [];      // observable entity salience from server
     let scenes = [];        // scene participants with ternary knowledge status
     let referenceStability = null;
+    let speechClaims = [];
+    let eventRoles = [];
+    let styleProfile = null;
+    let morphUnification = [];
+    let textFacts = { status: 'not_computed', status_if_negations_cover_anchor: null, facts: [] };
     let documentStructure = [];
     let workTitle = '';
     let workAuthor = '';
     const LARGE_DOCUMENT_TOKEN_LIMIT = 8000; // Keep full text interaction within browser rendering limits.
     let largeDocument = false;
+    let sourceCodePointToUtf16 = null;
     // One timeline cell per track per clip: a full book otherwise emits >14k
     // cells and blocks the main thread for minutes, so the diagram looks stuck.
     const MAX_TIMELINE_CLIPS = 400;
@@ -1266,14 +1290,95 @@
     }
 
     // ── Map token positions back to original text for whitespace recovery ──
+    function codePointToUtf16Map(text) {
+        const offsets = new Uint32Array(text.length + 1);
+        let codePointIndex = 0;
+        let utf16Index = 0;
+        for (const character of text) {
+            utf16Index += character.length;
+            offsets[++codePointIndex] = utf16Index;
+        }
+        return offsets.subarray(0, codePointIndex + 1);
+    }
+
+    function sourceOffsetToUtf16(position) {
+        const index = Number.isInteger(position) ? position : -1;
+        if (sourceCodePointToUtf16 && index >= 0 && index < sourceCodePointToUtf16.length) {
+            return sourceCodePointToUtf16[index];
+        }
+        return Math.max(0, index);
+    }
+
+    function evidencePresentation(token) {
+        const classes = [];
+        const scope = token.speech_scope;
+        if (scope?.mode === 'direct') classes.push('tok-direct-claim');
+        if (scope?.mode === 'reported') classes.push('tok-reported-claim');
+        const roles = Array.isArray(token.event_roles) ? token.event_roles : [];
+        if (roles.length) {
+            classes.push('tok-event-role');
+            roles.forEach(item => {
+                const role = String(item.role || '').toLowerCase().replace(/[^a-z0-9_-]/g, '');
+                if (role) classes.push(`tok-role-${role}`);
+            });
+        }
+        const titleParts = [];
+        const rd = token.pronoun_readings;
+        if (rd) {
+            classes.push('tok-event-role');
+            titleParts.push(`Прочтения: ${(rd.display || []).join(' / ') || 'не определены'} · ${rd.status} · источник: ${evidenceSourceLabel(rd)} · вероятность: не задана`);
+        }
+        if (token.morph_readings) {
+            classes.push('tok-event-role');
+            titleParts.push(`Унификация: ${token.morph_readings.status} · ${(token.morph_readings.constraints || []).join('; ') || 'нет ограничений'}`);
+        }
+        if (scope) {
+            const mode = scope.mode === 'direct' ? 'Прямая речь' : 'Переданная речь';
+            titleParts.push(`${mode} · источник: ${scope.source_name || 'не установлен'} · ${scope.world_status}`);
+        }
+        roles.forEach(item => {
+            titleParts.push(`Роль: ${item.role} · область: ${item.scope || 'narrator'} · ${item.world_status || 'не оценено'}`);
+        });
+        return {
+            classes: [...new Set(classes)],
+            title: titleParts.join(' | '),
+            claimId: scope?.claim_id || '',
+            roleNames: [...new Set(roles.map(item => item.role).filter(Boolean))],
+        };
+    }
+
+    function decorateEvidenceToken(token, markup, tokenIndex) {
+        const evidence = evidencePresentation(token);
+        if (!evidence.classes.length) return markup;
+        const index = Number.isInteger(tokenIndex) ? ` data-token-index="${tokenIndex}"` : '';
+        const claim = evidence.claimId ? ` data-speech-claim="${escHtml(evidence.claimId)}"` : '';
+        const roles = evidence.roleNames.length
+            ? ` data-event-roles="${escHtml(evidence.roleNames.join(','))}"` : '';
+        const title = evidence.title ? ` title="${escHtml(evidence.title)}"` : '';
+        return `<span class="${evidence.classes.join(' ')}"${index}${claim}${roles}${title}>${markup}</span>`;
+    }
+
     function mapTokenPositions() {
+        sourceCodePointToUtf16 = codePointToUtf16Map(originalText);
         let pos = 0;
         data.forEach(t => {
+            if (Number.isInteger(t.char_start) && Number.isInteger(t.char_end)) {
+                const start = sourceOffsetToUtf16(t.char_start);
+                const end = sourceOffsetToUtf16(t.char_end);
+                if (start >= pos && end >= start && end <= originalText.length) {
+                    t._gap = originalText.slice(pos, start);
+                    t._charStart = start;
+                    t._charEnd = end;
+                    pos = end;
+                    return;
+                }
+            }
             const idx = originalText.indexOf(t.word, pos);
             if (idx >= 0 && idx < pos + 200) {
                 // Found within reasonable distance
                 t._gap = originalText.slice(pos, idx);
                 t._charStart = idx;
+                t._charEnd = idx + t.word.length;
                 pos = idx + t.word.length;
             } else {
                 // Try from current pos with small lookahead (handles minor mismatches)
@@ -1281,6 +1386,7 @@
                 if (near >= 0 && near < pos + 100) {
                     t._gap = originalText.slice(pos, near);
                     t._charStart = near;
+                    t._charEnd = near + t.word.length;
                     pos = near + t.word.length;
                 } else {
                     t._gap = ' '; // fallback
@@ -1488,13 +1594,13 @@
     const ANALYSIS_CACHE_STORE = 'analysis_v2';
     let activeAnalysisController = null;
 
-    function analysisCacheKey(text) {
+    function analysisCacheKey(text, full = false) {
         let hash = 2166136261;
         for (let i = 0; i < text.length; i++) {
             hash ^= text.charCodeAt(i);
             hash = Math.imul(hash, 16777619);
         }
-        return `${text.length}:${(hash >>> 0).toString(16)}`;
+        return `${full ? 'full' : 'auto'}:${text.length}:${(hash >>> 0).toString(16)}`;
     }
 
     function openAnalysisCache() {
@@ -1546,6 +1652,25 @@
             entities = json.entities || [];
             scenes = json.scenes || [];
             referenceStability = json.reference_stability || null;
+            speechClaims = json.speech_claims || [];
+            eventRoles = json.event_roles || [];
+            styleProfile = json.style_profile || null;
+            morphUnification = json.morph_unification || [];
+            const incomingTextFacts = json.text_facts;
+            if (Array.isArray(incomingTextFacts)) {
+                textFacts = {
+                    status: incomingTextFacts.length ? 'ok' : 'not_computed',
+                    status_if_negations_cover_anchor: null,
+                    facts: incomingTextFacts,
+                };
+            } else if (incomingTextFacts && typeof incomingTextFacts === 'object') {
+                textFacts = {
+                    ...incomingTextFacts,
+                    facts: Array.isArray(incomingTextFacts.facts) ? incomingTextFacts.facts : [],
+                };
+            } else {
+                textFacts = { status: 'not_computed', status_if_negations_cover_anchor: null, facts: [] };
+            }
             documentStructure = json.document_structure || [];
             inferWorkMetadata(text);
             enrichPunctuationOps();
@@ -1560,19 +1685,30 @@
         }
     }
 
-    async function analyze(text) {
+    async function analyze(text, options = {}) {
+        const full = Boolean(options.full);
         activeAnalysisController?.abort();
         activeAnalysisController = new AbortController();
         const controller = activeAnalysisController;
         document.body.classList.add('loading');
+        const fullButton = document.getElementById('btnFullAnalysis');
+        if (fullButton) {
+            fullButton.disabled = full;
+            fullButton.textContent = full ? 'Полный разбор…' : 'Полный разбор';
+        }
         originalText = text;
         try { localStorage.setItem('logos_spectrum_text', text); } catch (_) {}
+        const cacheKey = analysisCacheKey(text, full);
         try {
-            const cached = await readCachedAnalysis(analysisCacheKey(text));
+            const cached = await readCachedAnalysis(cacheKey);
             if (cached && cached.data) {
                 if (controller.signal.aborted) return;
                 applyAnalysis(text, cached);
                 document.body.classList.remove('loading');
+                if (fullButton) {
+                    fullButton.disabled = false;
+                    fullButton.textContent = 'Полный разбор';
+                }
                 return;
             }
         } catch (error) {
@@ -1582,21 +1718,34 @@
             const res = await fetch('/api/entropy_map', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ text }),
+                body: JSON.stringify({ text, full }),
                 signal: controller.signal,
             });
             if (!res.ok) throw new Error(`Analysis failed (${res.status})`);
             const json = await res.json();
             if (controller.signal.aborted) return;
             if (json.data) {
-                try { await writeCachedAnalysis(analysisCacheKey(text), json); }
+                try { await writeCachedAnalysis(cacheKey, json); }
                 catch (error) { console.warn('Analysis result was not cached.', error); }
                 applyAnalysis(text, json);
             }
-        } catch (e) { console.error(e); }
-        finally {
-            if (controller === activeAnalysisController) document.body.classList.remove('loading');
+        } catch (e) {
+            console.error(e);
+            if (!controller.signal.aborted) toast(e.message || 'Не удалось разобрать текст');
         }
+        finally {
+            if (controller === activeAnalysisController) {
+                document.body.classList.remove('loading');
+                if (fullButton) {
+                    fullButton.disabled = false;
+                    fullButton.textContent = 'Полный разбор';
+                }
+            }
+        }
+    }
+
+    function analyzeFullDocument() {
+        if (originalText) analyze(originalText, {full: true});
     }
 
 
@@ -1645,10 +1794,10 @@
             if (activeClip && activeClip.tokens && activeClip.tokens.length) {
                 const firstTok = activeClip.tokens[0];
                 if (firstTok && Number.isFinite(firstTok._charStart)) {
-                    activeChapterIndex = chapters.findIndex(ch => firstTok._charStart >= ch.char_range[0] && firstTok._charStart < ch.char_range[1]);
+                    activeChapterIndex = chapters.findIndex(ch => firstTok._charStart >= sourceOffsetToUtf16(ch.char_range[0]) && firstTok._charStart < sourceOffsetToUtf16(ch.char_range[1]));
                     if (activeChapterIndex === -1 && chapters.length) {
                         const lastCh = chapters[chapters.length - 1];
-                        if (firstTok._charStart >= lastCh.char_range[0]) {
+                        if (firstTok._charStart >= sourceOffsetToUtf16(lastCh.char_range[0])) {
                             activeChapterIndex = chapters.length - 1;
                         }
                     }
@@ -1658,13 +1807,13 @@
 
         // Calculate sizes (words in full chapter range)
         const chCounts = chapters.map((ch, idx) => {
-            const start = ch.char_range[0];
-            const end = (idx + 1 < chapters.length) ? chapters[idx + 1].char_range[0] : Infinity;
+            const start = sourceOffsetToUtf16(ch.char_range[0]);
+            const end = (idx + 1 < chapters.length) ? sourceOffsetToUtf16(chapters[idx + 1].char_range[0]) : Infinity;
             return data.filter(t => Number.isFinite(t._charStart) && t._charStart >= start && t._charStart < end && /^[\p{L}\p{N}]/u.test(t.word)).length;
         });
         const maxChCount = Math.max(...chCounts, 1);
 
-        const candCounts = candidates.map(ch => data.filter(t => Number.isFinite(t._charStart) && t._charStart >= ch.char_range[0] && t._charStart < ch.char_range[1]).length);
+        const candCounts = candidates.map(ch => data.filter(t => Number.isFinite(t._charStart) && t._charStart >= sourceOffsetToUtf16(ch.char_range[0]) && t._charStart < sourceOffsetToUtf16(ch.char_range[1])).length);
         const maxCandCount = Math.max(...candCounts, 1);
 
         const chHtml = chapters.length ? chapters.map((chapter, index) => {
@@ -1709,12 +1858,13 @@
     }
 
     function jumpToPosition(charPosition) {
+        const browserPosition = sourceOffsetToUtf16(charPosition);
         if (largeDocument) {
-            const anchor = document.getElementById(`chapter-${charPosition}`);
+            const anchor = document.getElementById(`chapter-${browserPosition}`);
             if (anchor) anchor.scrollIntoView({behavior: 'smooth', block: 'start'});
             return;
         }
-        const foundIndex = data.findIndex(token => Number.isFinite(token._charStart) && token._charStart >= charPosition);
+        const foundIndex = data.findIndex(token => Number.isFinite(token._charStart) && token._charStart >= browserPosition);
         const index = Math.max(0, foundIndex >= 0 ? foundIndex : data.length - 1);
         const clip = clips.find(item => item.tokens.some(token => token._globalIndex >= index));
         if (clip) { selectedClip = clip.index; render(); }
@@ -1730,15 +1880,22 @@
 
     function updateStats() {
         const el = document.getElementById('stats');
-        if (!clips.length) { el.textContent = ''; return; }
+        if (!clips.length) {
+            el.textContent = '';
+            const fullButton = document.getElementById('btnFullAnalysis');
+            if (fullButton) fullButton.hidden = true;
+            return;
+        }
         const words = data.filter(t => t.word[0] && t.word[0].match(/[а-яА-Яa-zA-Z0-9]/)).length;
         const genreLabel = genre === 'verse_drama' ? ' · драма' : genre === 'poetry' ? ' · стихи' : '';
         // A partial result must never look like a full analysis: above the
         // server's quick-mode threshold plot, segmentation and roles are skipped.
-        const partialLabel = analysisStatus === 'partial'
+        const partialLabel = partialFeatures.length
             ? ` · частичный разбор, пропущено: ${partialFeatures.join(', ')}`
             : '';
         el.textContent = `${clips.length} клипов · ${words} слов${genreLabel}${partialLabel}`;
+        const fullButton = document.getElementById('btnFullAnalysis');
+        if (fullButton) fullButton.hidden = analysisStatus !== 'partial' || !partialFeatures.length;
     }
 
     // ── Text Pane ──
@@ -1782,7 +1939,7 @@
         if (largeDocument) {
             const chapterByStart = new Map(documentStructure
                 .filter(item => item.kind === 'chapter' && item.status === 'confirmed')
-                .map(item => [item.char_range[0], item.title]));
+                .map(item => [sourceOffsetToUtf16(item.char_range[0]), item.title]));
             const parts = [];
             const chapterStarts = new Map([...chapterByStart.entries()].sort((a, b) => a[0] - b[0]));
             const tokenClipMap = new Map();
@@ -1803,7 +1960,8 @@
                 const clipIndex = tokenClipMap.get(tokenIndex);
                 if (clipIndex !== undefined && selectedClip === clipIndex) classes.push('clip-selected-token');
                 const tokenAttrs = Number.isInteger(tokenIndex) ? ` data-token-index="${tokenIndex}"${clipIndex !== undefined ? ` data-clip="${clipIndex}"` : ''}` : '';
-                return classes.length || tokenAttrs ? `<span class="${classes.join(' ')}"${tokenAttrs}>${word}</span>` : word;
+                const markup = classes.length || tokenAttrs ? `<span class="${classes.join(' ')}"${tokenAttrs}>${word}</span>` : word;
+                return decorateEvidenceToken(token, markup, tokenIndex);
             };
             let paragraph = '';
             let chapterSkipEnd = -1;
@@ -2000,6 +2158,8 @@
                     wordHtml = escHtml(t.word);
                 }
 
+                wordHtml = decorateEvidenceToken(t, wordHtml, t._i);
+
                 // Wrap in turn span if speaker assigned
                 if (turnCls) {
                     inner += '<span class="' + turnCls + '" style="' + turnBg + '" title="' + turnTitle + '" data-turn="' + t.turn_id + '">' + wordHtml + '</span>';
@@ -2020,6 +2180,108 @@
             const denom = pane.scrollHeight - pane.clientHeight;
             if (denom > 0) pane.scrollTop = scrollPercent * denom;
         }, 0);
+    }
+
+    function evidenceSourceLabel(record) {
+        if (record?.source_status === 'ambiguous' && record.source_candidates?.length) {
+            return record.source_candidates.join(' / ') + ' · говорящий не установлен';
+        }
+        if (record?.source_name) return record.source_name;
+        const scope = record?.source_scope || record?.source_claim_id || record?.claim_id;
+        return (scope && scope !== 'narrator') || ['direct', 'reported'].includes(record?.mode)
+            ? 'источник не установлен' : 'рассказчик';
+    }
+
+    function renderTextFactsHtml() {
+        const facts = Array.isArray(textFacts)
+            ? textFacts
+            : (Array.isArray(textFacts?.facts) ? textFacts.facts : []);
+        const summary = Array.isArray(textFacts) ? null : textFacts;
+        const labels = {
+            yes: 'да · модель',
+            no: 'нет · модель',
+            open: 'открыто',
+            contradiction: 'противоречие внутри модели',
+            conflict: 'противоречие внутри модели',
+            ok: 'ок · модель',
+            source_scoped: 'отдельно по источникам',
+            no_pronouns: 'нет предикаций/местоименных вариантов',
+            not_computed: 'не вычислено',
+            error: 'не вычислено',
+            too_many: 'слишком много вариантов',
+        };
+        const statusLabel = value => labels[String(value || 'open')] || String(value);
+        const overallStatus = summary?.status;
+        const wholeAnchorStatus = summary?.status_if_negations_cover_anchor;
+        const hasSummary = overallStatus && overallStatus !== 'not_computed';
+        if (!facts.length && !hasSummary) return '';
+
+        const rows = facts.map((fact, index) => {
+            const status = String(fact.status || 'open');
+            const anchor = fact.anchor
+                ? `якорь дня: ${fact.anchor}`
+                : `якорь дня не задан · клауза ${fact.clause ?? '—'}`;
+            const atom = [evidenceSourceLabel(fact), fact.source_claim_id || 'повествование', fact.referent, fact.predicate, fact.tense, anchor]
+                .filter(value => value !== null && value !== undefined && value !== '')
+                .map(value => String(value)).join(' · ');
+            const conditionalStatus = fact.status_if_negations_cover_anchor;
+            const statusLines = [`по прочтениям: ${statusLabel(status)}`];
+            if (conditionalStatus && conditionalStatus !== status) {
+                statusLines.push(`если отрицание покрывает весь день: ${statusLabel(conditionalStatus)}`);
+            }
+            return `<div class="text-fact-row" data-text-fact-index="${index}"><span class="text-fact-atom">${escHtml(atom)}</span><span class="text-fact-status">${statusLines.map(line => `<span class="text-fact-status-line">${escHtml(line)}</span>`).join('')}</span></div>`;
+        }).join('');
+        const more = false
+            ? `<div class="text-facts-caveat">Ещё ${facts.length - 12} фактов не показаны.</div>`
+            : '';
+        const summaryHtml = hasSummary
+            ? `<div class="text-facts-caveat">Статус текста по прочтениям: ${escHtml(statusLabel(overallStatus))}.${wholeAnchorStatus && wholeAnchorStatus !== overallStatus ? ` При отрицании, охватывающем весь день: ${escHtml(statusLabel(wholeAnchorStatus))}.` : ''}</div>`
+            : '';
+        return `
+            <section class="text-facts-panel" data-text-facts-panel aria-label="Факты модели явных дней">
+                <div class="insp-section-title">Факты модели · по источникам (${facts.length})</div>
+                ${summaryHtml}
+                <div class="text-facts-caveat">Слова разных источников не объединяются в факт мира. Модель связывает только явные дневные якоря. «Вчера» — это день, не конкретный момент; отдельно показан условный статус для прочтения, где отрицание покрывает весь день. Интервалы вроде «весь вечер» и отсылки «тогда» не моделируются. Любое «противоречие» относится только к указанному прочтению внутри модели.</div>
+                <div class="text-facts-caveat">API не передаёт точные token/char spans для этих записей: показывается номер клаузы, если он есть, без подсветки фразы в тексте.</div>
+                <details><summary>Все факты (${facts.length})</summary>${rows || '<div class="text-facts-caveat">Отдельных фактов для отображения нет.</div>'}</details>${more}
+            </section>`;
+    }
+
+    function renderEvidenceOverviewHtml() {
+        const roleLabels = {agent:'кто', patient:'что / кого', recipient:'кому', location:'где', direction:'куда', source:'откуда', instrument:'чем', experiencer:'кто испытывает'};
+        const events = eventRoles.map(event => {
+            const roles = (event.roles || []).map(role => {
+                const values = role.referent_candidates?.length ? role.referent_candidates.join(' / ') : role.name;
+                const status = role.epistemic?.truth_kind === 'refuted' ? 'привязка отвергнута' : (role.scope || 'narrator');
+                return `${roleLabels[role.role] || role.role}: ${values} · ${status}`;
+            }).join('; ');
+            const when = (event.time || []).map(t => t.text).join(' / ') || 'не установлено';
+            const cause = event.cause || {status:'unknown'};
+            const why = cause.status === 'explicit' ? `явно сказана: ${cause.text}` : cause.status === 'hypothesis' ? 'гипотеза' : 'неизвестна';
+            return `<div class="text-fact-row" data-event-evidence="${escHtml(event.event_id)}" style="display:block"><strong>${escHtml(event.predicate)}</strong><div>${escHtml(roles)}</div><div>Когда: ${escHtml(when)} · Почему: ${escHtml(why)}</div><div>Источник: ${escHtml(evidenceSourceLabel(event))} · ${escHtml(event.source_claim_id || 'повествование')} · ${escHtml(event.world_status || 'не оценено')}</div></div>`;
+        }).join('');
+        const claims = speechClaims.map(claim => {
+            const span = claim.content_char_range || [];
+            const content = span.length === 2 ? originalText.slice(sourceOffsetToUtf16(span[0]), sourceOffsetToUtf16(span[1])) : '';
+            const epistemic = claim.epistemic || {};
+            const trust = epistemic.source_trust === null || epistemic.source_trust === undefined ? 'не задано' : String(epistemic.source_trust);
+            const support = epistemic.support ? ` · поддержка после учёта доверия: ${JSON.stringify(epistemic.support)}` : '';
+            return `<div class="text-fact-row" data-claim-evidence="${escHtml(claim.claim_id)}" style="display:block"><strong>${escHtml(evidenceSourceLabel(claim))}</strong> · ${escHtml(claim.claim_status)} · мир: ${escHtml(claim.world_status)}<div>${escHtml(content)}</div><div>Доверие: ${escHtml(trust)} · ${escHtml(epistemic.truth_kind || 'не оценено')}${escHtml(support)}</div>${claim.parent_claim_id ? `<div>Вложено в: ${escHtml(claim.parent_claim_id)}</div>` : ''}</div>`;
+        }).join('');
+        const readings = data.map((token, index) => {
+            const rd = token.pronoun_readings;
+            const morph = token.morph_readings;
+            if (!rd && !morph) return '';
+            const linked = rd ? `<div>Референты: ${escHtml((rd.display || []).join(' / ') || 'неизвестны')} · ${escHtml(rd.status)} · источник: ${escHtml(evidenceSourceLabel(rd))}</div><div>ID: ${escHtml((rd.values || []).join(' / '))}</div><div>Ранги: ${escHtml(JSON.stringify(rd.ranking || []))} · не вероятности</div><div>Условные варианты: ${escHtml(JSON.stringify(rd.only_if_different_times || []))} · противоречие при отрицании всего дня: ${escHtml(JSON.stringify(rd.contradiction_if_negation_covers_anchor || []))} · исключены: ${escHtml(JSON.stringify(rd.removed || []))}</div>` : '';
+            const participant = rd?.participant_binding ? `<div>Участник диалога: ${escHtml(rd.participant_binding.variable)} → ${escHtml(rd.participant_binding.name)} · ${escHtml(rd.participant_binding.entity_id)} · привязка по контексту обращения</div>` : '';
+            const forms = morph ? `<div>Унификация: ${escHtml(morph.status)}</div><div>${escHtml((morph.constraints || []).join('; ') || 'нет ограничений')}</div>${morph.candidates.map(c => `<div>${escHtml(c.lemma)} · ${escHtml(c.pos)} · ${escHtml(c.grammemes.join(', '))} · ${c.compatible === null ? 'совместимость неизвестна' : c.compatible ? 'совместимо с ограничениями' : 'несовместимо с ограничениями'} · ${escHtml(c.source)}</div>`).join('')}` : '';
+            return `<details class="text-fact-row" data-reading-token="${index}" style="display:block"><summary>${escHtml(token.word)} · прочтения</summary>${linked}${participant}${forms}<div>Вероятность не задана; ограничения синтаксического разбора не доказывают смысл.</div></details>`;
+        }).join('');
+        const sourceSummary = (textFacts?.sources || []).map(source => `<div>${escHtml(evidenceSourceLabel(source))} · ${escHtml(source.source_scope)} · ${escHtml(source.status)} · мир: ${escHtml(source.world_status)}</div><details data-joint-readings><summary>Совместные варианты (${source.joint_assignments?.length || 0})</summary><div>Позиции токенов: ${escHtml(JSON.stringify(source.joint_slots || []))}</div><div>${source.joint_assignments_materialized ? escHtml(JSON.stringify(source.joint_assignments || [])) : 'Совместные таблицы не материализированы; отдельные кандидаты не задают свободное сочетание.'}</div><div>Компоненты: ${escHtml(JSON.stringify(source.components || []))}</div><div>Условные: ${escHtml(JSON.stringify(source.conditional_assignments || []))}</div><div>Исключены: ${escHtml(JSON.stringify(source.removed_assignments || []))}</div><div>Допущения: ${escHtml(JSON.stringify(source.assumptions || []))}</div></details>`).join('');
+        const referents = (textFacts?.referents || []).map(ref => `<div data-referent-id="${escHtml(ref.referent_id)}">${escHtml(ref.display)} · ${escHtml(ref.referent_id)} · ${escHtml(ref.kind)}${ref.members?.length ? ' · участники: ' + escHtml(ref.members.join(' / ')) : ''}</div>`).join('');
+        const hasEvidence = events || claims || readings || sourceSummary;
+        const style = styleProfile?.metrics;
+        return `${hasEvidence ? `<section class="text-facts-panel" data-evidence-overview><div class="insp-section-title">Кто · кому · что · когда · где · почему</div>${sourceSummary}<details><summary>Референты и группы</summary>${referents}</details><details><summary>События и роли (${eventRoles.length})</summary>${events || 'Роли не установлены.'}</details><details><summary>Слова и источники (${speechClaims.length})</summary>${claims || 'Чужая речь не выделена.'}</details><details><summary>Связанные прочтения и морфология</summary>${readings}</details></section>` : ''}${style ? `<section class="text-facts-panel" data-style-profile><div class="insp-section-title">Стиль · весь текст</div><div>Длина предложения: ${style.avg_sentence_len.toFixed(2)} слов · слова: ${style.avg_word_len.toFixed(2)} букв</div><div>Связки: ${style.connector_density.toFixed(3)}</div><details><summary>Части речи и пунктуация</summary><div>${escHtml(JSON.stringify(style.pos_frequency))}</div><div>${escHtml(JSON.stringify(style.punctuation_density))}</div></details><div>Источник: ${escHtml(styleProfile.source)}</div>${styleProfile.verse?.status === 'hypothesis_from_lines' ? `<div data-verse-analysis>Ритм строк (слоги): ${escHtml(styleProfile.verse.syllables_per_line.join(' / '))} · неравномерность: ${Number(styleProfile.verse.burstiness).toFixed(2)}</div><div>Рифма: ${escHtml(styleProfile.verse.rhyme_scheme)} · проверено ${styleProfile.verse.rhyme_lines_checked} из ${styleProfile.verse.total_lines} строк · приближение по письменным окончаниям</div><div>Метр, гипотеза: ${escHtml(styleProfile.verse.meter?.name || 'не установлен')} · доля совпадения с шаблоном: ${Number(styleProfile.verse.meter?.match_score || 0).toFixed(2)}, не вероятность. Ударения оценены эвристически.</div>` : '<div>Строк недостаточно для рифмы и метра.</div>'}<div>Гармония не вычислена. Интонация неизвестна без аудио.</div></section>` : ''}`;
     }
 
     // ── Inspector ──
@@ -2083,7 +2345,7 @@
                 ${makeMetricBar('Concreteness', clip.avgConcreteness.toFixed(1), concPct, concColor(clip.avgConcreteness))}
                 ` : ''}
                 <div class="insp-row" style="margin-top: 14px;"><span class="insp-label">Диалог</span><span class="insp-value">${clip.isDialogue?'Да':'Нет'}</span></div>
-                ${opsHtml}${actorsHtml}`;
+                ${opsHtml}${actorsHtml}${renderEvidenceOverviewHtml()}${renderTextFactsHtml()}`;
         } else {
             const totalWords = data.filter(t => t.word[0] && t.word[0].match(/[а-яА-Яa-zA-Z0-9]/)).length;
             const avgE = clips.length ? clips.reduce((s,c)=>s+c.avgEntropy,0)/clips.length : 0;
@@ -2231,6 +2493,7 @@
                 })() : ''}
                 ${popHtml}
                 ${referenceHtml}
+                ${renderEvidenceOverviewHtml()}${renderTextFactsHtml()}
                 ${sceneHtml}
                 <div class="insp-hint">Выберите клип на таймлайне или предложение в тексте, чтобы увидеть его спектр. Зелёное — «дешёвые» когнатные корни, красное — редкие информационные пики.</div>`;
         }
