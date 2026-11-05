@@ -20,10 +20,12 @@ This application is built with **FastAPI** on the backend (integrating directly 
 
 ## Installation & Running
 
-Ensure you have FastAPI and Uvicorn installed:
+Ensure you have FastAPI and Uvicorn installed (`python-multipart` is needed only
+for file import, `/api/import-source`; without it that endpoint answers 503 and
+the rest of the server works):
 
 ```bash
-pip install fastapi uvicorn pydantic
+pip install fastapi uvicorn pydantic python-multipart
 ```
 
 Run the local server (listens on port 8001, see the bottom of `app.py`):

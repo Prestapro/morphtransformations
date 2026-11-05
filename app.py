@@ -28,6 +28,9 @@ from speech_attribution import analyze_speech_structure, narrator_event_role_eve
 from document_structure import detect_chapter_boundaries
 from source_import import import_pdf, import_epub, import_docx
 
+# Dialogue dash tokens of Russian prose: em dash, en dash, single and double hyphen.
+_DIALOGUE_DASHES = frozenset({'—', '–', '-', '--'})
+
 # --- Configuration & Constants ---
 PARENT_DIR = Path(os.environ.get('SPECTRUM_REPOSITORY_ROOT', Path(__file__).resolve().parent.parent))
 DB_PATH = PARENT_DIR / 'data' / 'language' / 'ru_paradigms.sqlite3'
@@ -352,8 +355,21 @@ class TensionMapRequest(BaseModel):
     source_assessments: Dict[str, SourceAssessment] = Field(default_factory=dict)
 
 
-@app.post('/api/import-source')
-async def import_source(file: UploadFile = File(...)):
+def _multipart_available() -> bool:
+    """FastAPI needs python-multipart for UploadFile routes; without it the
+    route definition raises at import time and the whole server fails."""
+    try:
+        import python_multipart  # noqa: F401
+        return True
+    except ImportError:
+        try:
+            from multipart.multipart import parse_options_header  # noqa: F401
+            return True
+        except ImportError:
+            return False
+
+
+async def _import_source_upload(file: UploadFile):
     suffix = Path(file.filename or '').suffix.lower()
     if suffix not in {'.pdf', '.epub', '.docx'}:
         raise HTTPException(status_code=415, detail={'code': 'unsupported_source_format'})
@@ -369,6 +385,19 @@ async def import_source(file: UploadFile = File(...)):
         'sections': source.sections,
         'exact_boundaries': True,
     }
+
+
+if _multipart_available():
+    @app.post('/api/import-source')
+    async def import_source(file: UploadFile = File(...)):
+        return await _import_source_upload(file)
+else:
+    @app.post('/api/import-source')
+    async def import_source():
+        raise HTTPException(status_code=503, detail={
+            'code': 'python_multipart_missing',
+            'message': 'File import needs the python-multipart package (pip install python-multipart).',
+        })
 
 # --- Genre Detection ---
 def detect_genre(text: str) -> str:
@@ -1234,9 +1263,9 @@ def segment_text(text: str, tokens: list, entity_map: dict, quick: bool = False)
                     })
             pos = idx + len(t)
     
-    # --- Pass 4: Dialogue turns (— after .!?) ---
+    # --- Pass 4: Dialogue turns (dialogue dash after .!?) ---
     for i, t in enumerate(tokens):
-        if t == '—' and i > 0 and tokens[i-1] in '.!?…»"':
+        if t in _DIALOGUE_DASHES and i > 0 and tokens[i-1] in '.!?…»"':
             already = any(abs(s['after_token'] - (i-1)) <= 1 for s in segments)
             if not already:
                 segments.append({
@@ -1272,7 +1301,13 @@ def segment_text(text: str, tokens: list, entity_map: dict, quick: bool = False)
             # punctuation before the opening em dash and ends before terminal
             # punctuation; engine speech offsets remain exact and half-open.
             token_start = max(0, covered[0] - 2)
-            token_end = max(token_start, covered[-1] - 1)
+            # Stop before trailing punctuation only; a speech that ends on a
+            # word keeps it (a fixed "-1" dropped it when an inner dash cut the
+            # reply: "— Я — босяк").
+            last = len(covered) - 1
+            while last > 0 and not re.search(r'\w', token_spans[covered[last]].group()):
+                last -= 1
+            token_end = max(token_start, covered[last])
             segments.append({
                 'after_token': max(0, token_start - 1),
                 'type': 'speaker',
@@ -1280,6 +1315,7 @@ def segment_text(text: str, tokens: list, entity_map: dict, quick: bool = False)
                 'reason': f'form:{prose_turn.speaker or ""}',
                 'confidence': prose_turn.confidence,
                 'source_format': 'prose_em',
+                'speaker_source': getattr(prose_turn, 'speaker_source', ''),
                 'token_start': token_start,
                 'token_end': token_end,
             })
@@ -2233,7 +2269,7 @@ async def entropy_map(req: TensionMapRequest):
                 
                 role = "mention"
                 if ni < len(tokens) and tokens[ni] == ":": role = "speaker"
-                elif (ni + 1 < len(tokens) and tokens[ni] == "—"
+                elif (ni + 1 < len(tokens) and tokens[ni] in _DIALOGUE_DASHES
                       and res['type'] == "person"):
                     # Dash promotion needs morphological person evidence;
                     # otherwise any capitalized word before "—" became a 1.0 speaker.
@@ -2372,7 +2408,7 @@ async def entropy_map(req: TensionMapRequest):
                 "context_role": ent['role'] if ent else "none",
                 "social": ent['social'] if ent else "none",
                 "confidence": ent['confidence'] if ent else 0.0,
-                "is_dialogue": in_quotes or t in ['—', '-'],
+                "is_dialogue": in_quotes or t in _DIALOGUE_DASHES,
                 "is_operator": op_type is not None,
                 "op_type": op_type,
                 "_gap": token_gaps[i] if i < len(token_gaps) else ""
@@ -2659,13 +2695,15 @@ async def entropy_map(req: TensionMapRequest):
                     surface_gender = None
                     surface_is_surn = False
                     for lemma, pos, gram, form in rows:
+                        # Patronymics keep their gender like surnames:
+                        # Ивановна must not collapse into Иванович.
                         if 'femn' in gram and 'nomn' in gram:
                             surface_gender = 'femn'
-                            surface_is_surn = 'Surn' in gram
+                            surface_is_surn = 'Surn' in gram or 'Patr' in gram
                             break
                         if 'masc' in gram and 'nomn' in gram:
                             surface_gender = 'masc'
-                            surface_is_surn = 'Surn' in gram
+                            surface_is_surn = 'Surn' in gram or 'Patr' in gram
 
                     if surface_is_surn and surface_gender:
                         # For surnames: entity_id = the nomn form of the
@@ -2777,7 +2815,7 @@ async def entropy_map(req: TensionMapRequest):
                     # Vocative check: preceded or followed by comma, exclamation
                     prev_word = results[i-1]['word'] if i > 0 else ''
                     next_word = results[i+1]['word'] if i+1 < len(results) else ''
-                    is_vocative = (prev_word != '' and prev_word in {',', '!', ';', '—'}) or next_word in {',', '!', '?', ';'}
+                    is_vocative = (prev_word != '' and prev_word in {',', '!', ';'} | _DIALOGUE_DASHES) or next_word in {',', '!', '?', ';'}
                     if is_vocative:
                         r['is_addressee'] = True
                         r['addressee_of'] = r.get('speaker', '')

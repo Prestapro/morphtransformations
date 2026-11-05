@@ -76,7 +76,7 @@ _EM_DASH_START = re.compile(r"^[—–-]\s*")
 def detect_format(text: str) -> TextFormat:
     lines = [l.strip() for l in text.splitlines() if l.strip()][:50]
     drama  = sum(1 for l in lines if _is_drama_speaker_candidate(l))
-    em     = sum(1 for l in lines if l.startswith("—") or l.startswith("– "))
+    em     = sum(1 for l in lines if l.startswith(("—", "–", "--", "- ")))
     quote  = sum(1 for l in lines if l.startswith("«") or l.startswith('"'))
     if drama >= 2 and drama > em:
         return TextFormat.DRAMA

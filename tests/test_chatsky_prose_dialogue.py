@@ -83,10 +83,19 @@ class TestProseTurnBounds:
                 assert turn['confidence'] == 0.0
 
     def test_unattributed_turn_stays_bounded(self, chatsky):
-        anonymous = [t for t in chatsky['dialogue_turns'] if not t['speaker']]
-        assert anonymous
-        for turn in anonymous:
+        # «— Карету мне, карету! — крикнул он»: no name in its own paragraph.
+        # Since 2026-11-07 the pronoun resolves to Чацкий with confidence < 1;
+        # such weakly attributed turns must stay bounded like anonymous ones.
+        weak = [t for t in chatsky['dialogue_turns']
+                if not t['speaker'] or t['confidence'] < 1.0]
+        assert weak
+        for turn in weak:
             assert turn['end_token'] < len(chatsky['data']) - 1
+
+    def test_pronoun_turn_resolves_to_chatsky(self, chatsky):
+        last = chatsky['dialogue_turns'][-1]
+        assert last['speaker'] == 'Чацкий'
+        assert 0.0 < last['confidence'] < 1.0
 
     def test_empty_text_yields_no_turns(self):
         result = _analyze('')
@@ -129,3 +138,21 @@ class TestRoleEvidence:
             for role in event['roles']:
                 if role['role'] == 'source':
                     assert role['source'] == 'verb_frame'
+
+
+class TestDashForms:
+    """2026-11-06 measurement: replies led by «–» or «-» were not found at all."""
+
+    def test_en_dash_and_hyphen_give_the_same_speakers(self, chatsky):
+        text = FIXTURE.read_text(encoding='utf-8')
+        expected = [t['speaker'] for t in chatsky['dialogue_turns']]
+        for dash in ('–', '-'):
+            result = _analyze(text.replace('—', dash))
+            assert [t['speaker'] for t in result['dialogue_turns']] == expected, dash
+
+    def test_inner_dash_keeps_last_word_of_speech(self):
+        result = _analyze('Он сел.\n— Я — босяк, — сказал Аристид Кувалда.\n')
+        turn = result['dialogue_turns'][0]
+        words = _words(result, turn['start_token'], turn['end_token'])
+        assert 'босяк' in words
+        assert turn['speaker'] == 'Аристид Кувалда'
